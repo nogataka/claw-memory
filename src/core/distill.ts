@@ -4,16 +4,24 @@
 // preferences + embedded conversation chunks. Mirrors agent-claw's summarize
 // pipeline, minus the HTTP layer.
 
-import { query } from "@anthropic-ai/claude-agent-sdk";
-import { getModel, buildFullSdkEnv } from "./providers.js";
+import { complete } from "./llm.js";
 import { embedPassage } from "./embeddings.js";
 import { addSessionSummary, setPreference } from "./memory.js";
-import { saveChunks, deleteChunksBySession } from "./vector-memory.js";
+import {
+  saveChunks,
+  deleteChunksBySession,
+  chunkExists,
+  type ChunkInput,
+} from "./vector-memory.js";
 import { loadTranscript, type TranscriptMessage } from "./transcript.js";
+import { stripPrivate } from "./private.js";
+import { log } from "./logger.js";
 
 const MIN_MESSAGES = 2;
 const MIN_TEXT_LENGTH = 100;
 const MAX_CHARS_PER_MESSAGE = 500;
+
+const OBS_TYPES = ["discovery", "bugfix", "feature", "decision", "change", "other"];
 
 export interface DistillInput {
   projectId: string;
@@ -33,29 +41,33 @@ export interface DistillResult {
 
 const PROMPT = (transcript: string) => `以下の会話を分析して JSON で回答してください。
 
-1. summary: 会話の要約を1-2文で。会話と同じ言語で。
-2. preferences: ユーザーの設定や好みが読み取れた場合のみ。
-   key は必ず次のいずれかを使うこと（該当しなければそのpreferenceは出さない）:
-   - language: 使用言語
-   - response_style: 回答スタイル
-   - detail_level: 回答の詳細度
-   - code_style: コードの書き方の好み
-   - framework: 好むフレームワーク・ライブラリ
-   - tone: 口調・敬語の有無
-   - tools: 好んで使うツール
+1. summary: 会話の構造化要約。会話と同じ言語で、次の節を含む簡潔なMarkdown:
+   "### 依頼" / "### 調査・判明" / "### 完了" / "### 次の一手"（該当が無い節は省略可）。
+2. obs_type: この会話の主目的を1つ選ぶ: ${OBS_TYPES.join(" | ")}
+3. concepts: 主要トピック・技術キーワードの配列（3〜8個程度）。
+4. files_read: 会話中で読んだ/参照したファイルパスの配列（無ければ空配列）。
+5. files_modified: 会話中で作成/編集したファイルパスの配列（無ければ空配列）。
+6. preferences: ユーザーの設定や好みが読み取れた場合のみ。
+   key は必ず次のいずれか（該当しなければ出さない）:
+   language | response_style | detail_level | code_style | framework | tone | tools
    変更がなければ空配列。
 
 JSON のみ回答:
-{"summary": "...", "preferences": [{"key": "language|response_style|detail_level|code_style|framework|tone|tools", "value": "..."}]}
+{"summary": "...", "obs_type": "...", "concepts": ["..."], "files_read": ["..."], "files_modified": ["..."], "preferences": [{"key": "...", "value": "..."}]}
 
 <conversation>
 ${transcript}
 </conversation>`;
 
 export async function distill(input: DistillInput): Promise<DistillResult> {
-  const messages =
+  const loaded =
     input.messages ??
     (input.transcriptPath ? loadTranscript(input.transcriptPath) : []);
+
+  // Drop <private>…</private> spans before anything is persisted or sent to the LLM.
+  const messages = loaded
+    .map((m) => ({ ...m, text: stripPrivate(m.text) }))
+    .filter((m) => m.text.trim());
 
   if (messages.length < MIN_MESSAGES) {
     return { skipped: true, reason: "too few messages" };
@@ -73,36 +85,19 @@ export async function distill(input: DistillInput): Promise<DistillResult> {
   }
 
   // --- LLM: summary + preferences (single tool-less turn) ---
-  const sdkStream = query({
+  const responseText = await complete({
     prompt: PROMPT(transcript),
-    options: {
-      model: getModel(),
-      maxTurns: 1,
-      allowedTools: [],
-      permissionMode: "bypassPermissions",
-      env: buildFullSdkEnv(),
-    },
+    tier: "summary",
   });
-
-  let responseText = "";
-  for await (const event of sdkStream) {
-    const ev = event as { type: string; message?: { role: string; content: unknown } };
-    if (ev.type === "assistant" && ev.message?.role === "assistant") {
-      const content = ev.message.content;
-      if (typeof content === "string") responseText += content;
-      else if (Array.isArray(content)) {
-        for (const block of content) {
-          const b = block as { type: string; text?: string };
-          if (b.type === "text" && b.text) responseText += b.text;
-        }
-      }
-    }
-  }
 
   const jsonMatch = responseText.match(/\{[\s\S]*\}/);
   if (!jsonMatch) throw new Error("Failed to parse distill JSON response");
   const result = JSON.parse(jsonMatch[0]) as {
     summary: string;
+    obs_type?: string;
+    concepts?: string[];
+    files_read?: string[];
+    files_modified?: string[];
     preferences?: Array<{ key: string; value: string }>;
   };
 
@@ -116,6 +111,15 @@ export async function distill(input: DistillInput): Promise<DistillResult> {
       }
     }
   }
+
+  // Session-level structured metadata applied to every chunk of this session.
+  const obsType =
+    result.obs_type && OBS_TYPES.includes(result.obs_type)
+      ? result.obs_type
+      : null;
+  const concepts = (result.concepts ?? []).map(String).filter(Boolean);
+  const filesRead = (result.files_read ?? []).map(String).filter(Boolean);
+  const filesModified = (result.files_modified ?? []).map(String).filter(Boolean);
 
   // --- Vector memory: re-chunk this session (idempotent) ---
   let chunkCount = 0;
@@ -133,8 +137,10 @@ export async function distill(input: DistillInput): Promise<DistillResult> {
       }
     }
     if (pairs.length > 0) {
-      const toSave = [];
+      const toSave: ChunkInput[] = [];
       for (const p of pairs) {
+        // Cross-session dedup: skip pairs already stored verbatim.
+        if (chunkExists(input.projectId, p.userText, p.assistantText)) continue;
         const embedding = await embedPassage(
           `User: ${p.userText}\nAssistant: ${p.assistantText}`
         );
@@ -144,14 +150,26 @@ export async function distill(input: DistillInput): Promise<DistillResult> {
           userText: p.userText,
           assistantText: p.assistantText,
           embedding,
+          obsType,
+          concepts,
+          filesRead,
+          filesModified,
         });
       }
-      saveChunks(toSave);
+      if (toSave.length > 0) saveChunks(toSave);
       chunkCount = toSave.length;
     }
   } catch (err) {
     console.error("[claw-memory] chunk embed failed:", err);
   }
+
+  log("distill", {
+    projectId: input.projectId,
+    sessionId: input.sessionId,
+    obsType,
+    chunks: chunkCount,
+    preferences: result.preferences?.length ?? 0,
+  });
 
   return {
     summary: result.summary,

@@ -23,6 +23,7 @@
     "@anthropic-ai/claude-agent-sdk": "^0.2.44",
     "@hono/node-server": "^1.13.0",
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "@openai/codex-sdk": "^0.135.0",
     "@xenova/transformers": "^2.17.2",
     "better-sqlite3": "12.8.0",
     "hono": "^4.6.0",

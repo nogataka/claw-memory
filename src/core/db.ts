@@ -52,7 +52,29 @@ sqlite.exec(`
     assistant_text TEXT NOT NULL,
     created_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS distill_watermarks (
+    path TEXT PRIMARY KEY,
+    mtime_ms INTEGER NOT NULL,
+    distilled_at TEXT NOT NULL
+  );
 `);
+
+// --- Additive, migration-less schema evolution -----------------------------
+// New columns are added with try/catch so existing ~/.claw-memory/memory.db
+// files keep working (SQLite ALTER TABLE ADD COLUMN can't be IF NOT EXISTS).
+for (const col of [
+  "obs_type TEXT",
+  "concepts TEXT",
+  "files_read TEXT",
+  "files_modified TEXT",
+  "deleted_at TEXT",
+]) {
+  try {
+    sqlite.exec(`ALTER TABLE conversation_chunks ADD COLUMN ${col}`);
+  } catch {
+    // column already exists
+  }
+}
 
 // vec0 virtual table — embedding + project_id metadata column so KNN can filter
 // by project inside the MATCH query (no post-filter loss).

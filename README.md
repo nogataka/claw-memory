@@ -32,9 +32,47 @@ First run downloads the e5 model (~100 MB, cached in `~/.cache`).
 | `memory_remember(text, cwd?, sessionId?)` | Store a free-text note |
 | `memory_distill(cwd, sessionId? \| transcriptPath?)` | Summarize a session into memory (needs LLM creds) |
 | `memory_get_preferences(cwd?)` | List stored preferences |
+| `memory_search_logs(query, sources?, projectPath?, startDate?, endDate?, limit?, offset?)` | Full-text search over RAW Claude Code + Codex transcripts (second memory source; finds undistilled history) |
+| `memory_forget(ids)` | Soft-delete chunks (hidden from search/recall/viewer) |
 
-`memory_distill` uses the Claude Agent SDK; set `AGENT_SDK_MODEL` and the relevant
-`ANTHROPIC_*` credentials in the environment. All other tools are fully local.
+`memory_distill` uses an LLM (see *LLM backend* below). `memory_search_logs` reads
+`~/.claude/projects` and `~/.codex/sessions` directly. All other tools are fully local.
+
+## LLM backend (distill only)
+
+distill needs a single tool-less completion, selectable via `CLAW_MEMORY_LLM_BACKEND`:
+
+| Backend | Auth | Notes |
+|---------|------|-------|
+| `agent-sdk` (default) | Claude Code CLI login (Claude Pro/Max/Team/Enterprise) | zero-config, no API key |
+| `codex-sdk` | Codex CLI login (ChatGPT/Codex plan) | `@openai/codex-sdk`, no API key; requires Codex CLI. Model via `CLAW_MEMORY_CODEX_MODEL` |
+| `anthropic` | `ANTHROPIC_API_KEY` (`ANTHROPIC_BASE_URL` optional) | plain Messages API |
+| `openai-compatible` | `CLAW_MEMORY_OPENAI_API_KEY` + `CLAW_MEMORY_OPENAI_BASE_URL` | Gemini / OpenRouter / LM Studio (set `CLAW_MEMORY_MODEL`) |
+
+```bash
+export CLAW_MEMORY_LLM_BACKEND=codex-sdk    # use the Codex subscription for distill
+```
+
+Both SDK backends reuse a subscription login (no API key). Tier routing (cheap models for
+simple work): `CLAW_MEMORY_TIER_SMART` / `_SUMMARY` / `_SIMPLE`, else `AGENT_SDK_MODEL` /
+`CLAW_MEMORY_MODEL` (agent-sdk/anthropic default `claude-sonnet-4-5`; codex-sdk uses the Codex default).
+
+## Automatic capture & recall (Claude Code hooks)
+
+No daemon — hooks spawn the CLI per event. Register in `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "SessionStart":     [{ "hooks": [{ "type": "command", "command": "/Volumes/Data/dev/claw-memory/hooks/claw-hook.sh recall" }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "/Volumes/Data/dev/claw-memory/hooks/claw-hook.sh recall" }] }],
+    "Stop":             [{ "hooks": [{ "type": "command", "command": "/Volumes/Data/dev/claw-memory/hooks/claw-hook.sh distill" }] }]
+  }
+}
+```
+
+- **recall** (SessionStart / UserPromptSubmit): prints the memory block to stdout → injected into context. Preferences + recent summaries, plus semantically similar past conversations when the prompt is present.
+- **distill** (Stop): detached, fire-and-forget. Incremental via a watermark (skips sessions with no new content). Honors `CLAW_MEMORY_EXCLUDED_PROJECTS` and `<private>…</private>`.
 
 ## Register with an agent
 

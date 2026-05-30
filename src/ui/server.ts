@@ -5,10 +5,12 @@
 
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
+import { streamSSE } from "hono/streaming";
 import { sqlite } from "../core/db.js";
 import { listProjects } from "../core/projects.js";
 import { getRecentSummaries, getPreferences } from "../core/memory.js";
 import { listChunks, getChunkCount } from "../core/vector-memory.js";
+import { searchLogs, type LogSource } from "../core/logsearch/search.js";
 import { PAGE } from "./page.js";
 
 function countSummaries(projectId: string): number {
@@ -30,6 +32,30 @@ export function buildUiApp(): Hono {
   const app = new Hono();
 
   app.get("/", (c) => c.html(PAGE));
+
+  // Server-Sent Events: push a "change" whenever the DB is modified by any
+  // connection (the MCP server runs in a separate process). PRAGMA data_version
+  // increments on commits from other connections, so polling it in-process is a
+  // cheap, I/O-free change signal — no client-side polling required.
+  app.get("/api/events", (c) => {
+    return streamSSE(c, async (stream) => {
+      const dataVersion = () =>
+        sqlite.pragma("data_version", { simple: true }) as number;
+      let last = dataVersion();
+      await stream.writeSSE({ event: "ready", data: String(last) });
+      while (!stream.closed && !stream.aborted) {
+        await stream.sleep(1500);
+        const v = dataVersion();
+        if (v !== last) {
+          last = v;
+          await stream.writeSSE({ event: "change", data: String(v) });
+        } else {
+          // heartbeat keeps proxies/browser from dropping an idle connection
+          await stream.writeSSE({ event: "ping", data: "" });
+        }
+      }
+    });
+  });
 
   app.get("/api/stats", (c) => {
     const projects = listProjects();
@@ -64,6 +90,20 @@ export function buildUiApp(): Hono {
       preferences: getPreferences(projectId),
       chunks: listChunks(projectId, 300),
     });
+  });
+
+  // Raw transcript search (cc-search port) — Claude Code + Codex logs.
+  app.get("/api/logs", async (c) => {
+    const query = c.req.query("q") ?? "";
+    if (!query.trim()) return c.json({ results: [], total: 0 });
+    const sourcesParam = c.req.query("sources");
+    const out = await searchLogs({
+      query,
+      sources: sourcesParam ? (sourcesParam.split(",") as LogSource[]) : undefined,
+      projectPath: c.req.query("project") || undefined,
+      limit: Number(c.req.query("limit") ?? 30),
+    });
+    return c.json(out);
   });
 
   return app;

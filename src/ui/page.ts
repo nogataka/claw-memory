@@ -41,12 +41,19 @@ export const PAGE = /* html */ `<!doctype html>
           border-radius:6px; padding:6px 10px; margin:0 8px 8px 0; }
   .pref b { color:var(--accent); }
   .empty { color:var(--muted); padding:30px; text-align:center; }
+  .cmeta { color:var(--muted); font-size:11px; margin:2px 0; word-break:break-all; }
+  header button#logsBtn { background:var(--chip); color:var(--fg); border:1px solid var(--border);
+    border-radius:6px; padding:6px 10px; cursor:pointer; font-size:12px; }
+  header button#logsBtn.on { background:var(--accent); color:#0d1117; border-color:var(--accent); }
+  .src { color:var(--accent); font-size:10px; }
+  .hl { background:#9e6a03; color:#fff; border-radius:2px; padding:0 1px; }
 </style>
 </head>
 <body>
 <header>
   <h1>🧠 claw-memory</h1>
   <span class="muted" id="stats"></span>
+  <button id="logsBtn" title="生ログ全文検索 (Claude Code + Codex)">🔎 ログ検索</button>
   <input id="search" placeholder="フィルタ (本文を絞り込み)" />
 </header>
 <div class="layout">
@@ -62,7 +69,21 @@ async function boot() {
   el("stats").textContent = s.projects + " projects · " + s.chunks + " chunks · " + s.summaries + " summaries";
   projects = await (await fetch("/api/projects")).json();
   renderNav();
-  if (projects.length) select(projects[0].id);
+  if (projects.length && !current) select(projects[0].id);
+  else if (current) select(current);
+}
+
+// Live updates: the server pushes a "change" event whenever the DB is written
+// (e.g. the MCP server stores a new memory). Refresh in place — keep the
+// selected project and scroll position so the view doesn't jump.
+function connectEvents() {
+  const es = new EventSource("/api/events");
+  es.addEventListener("change", () => {
+    const main = el("main");
+    const y = main ? main.scrollTop : 0;
+    boot().then(() => { const m = el("main"); if (m) m.scrollTop = y; });
+  });
+  es.onerror = () => {}; // EventSource auto-reconnects
 }
 function renderNav() {
   el("nav").innerHTML = projects.map(p =>
@@ -93,15 +114,69 @@ function render(d) {
       + (s.created_at||"").split("T")[0]+'</div><pre>'+esc(s.summary)+'</pre></div>').join("") + '</div>';
   if (chunks.length) h += '<div class="sect"><h2>Conversation Chunks</h2>'
     + chunks.map(c => '<div class="card"><div class="meta"><span class="tag">chunk</span>'
+      + (c.obsType ? '<span class="tag">'+esc(c.obsType)+'</span>' : "")
       + (c.createdAt||"").split("T")[0]+'</div>'
+      + chunkMeta(c)
       + '<pre><span class="u">User:</span> '+esc(c.userText)
       + (c.assistantText ? '\\n<span class="u">Assistant:</span> '+esc(c.assistantText) : "")
       + '</pre></div>').join("") + '</div>';
   el("main").innerHTML = h || '<div class="empty">記憶がありません</div>';
 }
+function chunkMeta(c) {
+  const parts = [];
+  if (c.concepts && c.concepts.length) parts.push('<div class="cmeta">🏷 '+c.concepts.map(esc).join(", ")+'</div>');
+  const files = [].concat(c.filesModified||[], c.filesRead||[]);
+  if (files.length) parts.push('<div class="cmeta">📄 '+files.map(esc).join(", ")+'</div>');
+  return parts.join("");
+}
 function esc(s){ return (s==null?"":String(s)).replace(/[&<>]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[m])); }
-el("search").addEventListener("input", e => { filter = e.target.value; if (current) select(current); });
+let logMode = false, logTimer = null;
+function currentPath() { const p = projects.find(x => x.id === current); return p ? p.path : ""; }
+
+el("logsBtn").addEventListener("click", () => {
+  logMode = !logMode;
+  el("logsBtn").classList.toggle("on", logMode);
+  el("search").value = "";
+  el("search").placeholder = logMode
+    ? "生ログ全文検索 (このプロジェクトのCC+Codexログ)"
+    : "フィルタ (本文を絞り込み)";
+  if (logMode) el("main").innerHTML = '<div class="empty">検索語を入力してください (Claude Code + Codex の生ログを全文検索)</div>';
+  else if (current) select(current);
+});
+
+el("search").addEventListener("input", e => {
+  const v = e.target.value;
+  if (logMode) {
+    clearTimeout(logTimer);
+    logTimer = setTimeout(() => runLogSearch(v), 300);
+  } else {
+    filter = v;
+    if (current) select(current);
+  }
+});
+
+async function runLogSearch(q) {
+  if (!q.trim()) { el("main").innerHTML = '<div class="empty">検索語を入力してください</div>'; return; }
+  el("main").innerHTML = '<div class="empty">検索中…</div>';
+  const url = "/api/logs?q=" + encodeURIComponent(q) + "&project=" + encodeURIComponent(currentPath()) + "&limit=50";
+  let d;
+  try { d = await (await fetch(url)).json(); }
+  catch { el("main").innerHTML = '<div class="empty">検索に失敗しました</div>'; return; }
+  if (!d.results || d.results.length === 0) { el("main").innerHTML = '<div class="empty">該当なし</div>'; return; }
+  const cards = d.results.map(r => {
+    const date = r.timestamp ? r.timestamp.split("T")[0] : "????-??-??";
+    const ctx = esc(r.contextBefore) + '<span class="hl">' + esc(r.matchedText) + '</span>' + esc(r.contextAfter);
+    return '<div class="card"><div class="meta">'
+      + '<span class="tag">' + esc(r.source) + '</span>'
+      + '<span class="tag">' + esc(r.role) + '</span>' + date + '</div>'
+      + '<div class="cmeta">' + esc(r.projectPath) + ' · #' + esc((r.sessionId||"").slice(0,8)) + '</div>'
+      + '<pre>…' + ctx + '…</pre></div>';
+  }).join("");
+  el("main").innerHTML = '<div class="sect"><h2>Raw Log Search — ' + d.total + ' hits (showing ' + d.results.length + ')</h2>' + cards + '</div>';
+}
+
 boot();
+connectEvents();
 </script>
 </body>
 </html>`;
