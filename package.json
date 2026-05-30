@@ -27,7 +27,8 @@
     "skills",
     ".claude-plugin",
     ".mcp.json",
-    "README.md"
+    "README.md",
+    "README.ja.md"
   ],
   "engines": {
     "node": ">=20.0.0"
