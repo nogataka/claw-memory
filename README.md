@@ -14,13 +14,54 @@ separate from any other app.
 
 ## Install
 
+Published as `@nogataka/claw-memory`. Install once globally so hooks/MCP resolve fast
+(otherwise they fall back to `npx`):
+
+```bash
+npm install -g @nogataka/claw-memory
+```
+
+First run downloads the e5 model (~100 MB, cached in `~/.cache`).
+
+### Claude Code (plugin)
+
+```
+/plugin marketplace add nogataka/claw-memory
+/plugin install claw-memory
+```
+
+Restart Claude Code. This auto-registers the MCP server and the hooks
+(SessionStart/UserPromptSubmit → recall injection, Stop → auto-distill).
+No manual setup. (Not using the plugin? Run `claw-memory install --claude-code`
+to merge the MCP server + hooks into `~/.claude/settings.json`.)
+
+### Codex (installer)
+
+Codex has no third-party plugin marketplace, so register via the installer:
+
+```bash
+claw-memory install --codex      # adds [mcp_servers.claw-memory] to ~/.codex/config.toml
+                                 # + memory-recall skill + AGENTS.md recall instruction
+```
+
+Restart Codex. Recall is available via the `memory_recall` MCP tool (the AGENTS.md
+note tells the agent to call it at session start). **Auto-distill is manual on Codex**
+(no notify hook); run periodically:
+
+```bash
+claw-memory distill-codex --recent     # distill recent Codex sessions (watermark-deduped)
+claw-memory distill-codex --all        # backfill everything
+```
+
+Remove with `claw-memory uninstall --codex` (or `--claude-code`).
+
+### From source
+
 ```bash
 cd claw-memory
 npm install      # builds native better-sqlite3 / sqlite-vec
 npm run build    # tsc -> dist/
 ```
-
-First run downloads the e5 model (~100 MB, cached in `~/.cache`).
 
 ## MCP tools
 

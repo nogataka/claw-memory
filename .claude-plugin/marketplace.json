@@ -1,0 +1,16 @@
+{
+  "name": "claw-memory-marketplace",
+  "owner": { "name": "nogataka" },
+  "metadata": {
+    "description": "claw-memory: local semantic memory + raw-log search for Claude Code",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "claw-memory",
+      "source": "./",
+      "description": "Local semantic memory: auto-distill, recall injection, and raw Claude Code + Codex transcript search.",
+      "version": "0.1.0"
+    }
+  ]
+}

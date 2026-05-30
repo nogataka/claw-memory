@@ -1,19 +1,45 @@
 {
-  "name": "claw-memory",
+  "name": "@nogataka/claw-memory",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
-  "description": "Independent, in-process semantic memory MCP server (sqlite-vec + local Xenova e5) with a lightweight web viewer. No daemon, no Python.",
+  "description": "Independent, in-process semantic memory MCP server (sqlite-vec + local Xenova e5) with a lightweight web viewer. No daemon, no Python. Installable as a Claude Code plugin and a Codex MCP server.",
+  "license": "MIT",
+  "author": "nogataka",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nogataka/claw-memory.git"
+  },
+  "keywords": [
+    "mcp",
+    "memory",
+    "claude-code",
+    "codex",
+    "sqlite-vec",
+    "embeddings",
+    "rag"
+  ],
   "bin": {
     "claw-memory": "./dist/cli.js"
   },
+  "files": [
+    "dist",
+    "hooks",
+    "skills",
+    ".claude-plugin",
+    ".mcp.json",
+    "README.md"
+  ],
   "engines": {
     "node": ">=20.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
     "prebuild": "npm run clean",
+    "prepublishOnly": "npm run build",
     "mcp": "node dist/cli.js mcp",
     "ui": "node dist/cli.js ui --open",
     "dev:mcp": "tsx src/cli.ts mcp",

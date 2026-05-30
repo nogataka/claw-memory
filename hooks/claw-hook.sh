@@ -1,10 +1,21 @@
 #!/usr/bin/env bash
-# claw-memory lifecycle-hook wrapper.
-#   Usage (in ~/.claude/settings.json): "<this>/claw-hook.sh <distill|recall>"
-# Reads the hook's JSON from stdin and forwards it to the claw-memory CLI.
-# For `recall`, stdout is injected into Claude's context; `distill` is detached
-# and fire-and-forget. Always exits 0 so a memory hiccup never blocks a session.
+# claw-memory binary resolver — used by plugin hooks and the plugin MCP server.
+#   hooks:  claw-hook.sh hook <recall|distill>   (hook JSON on stdin)
+#   mcp:    claw-hook.sh mcp                      (stdio MCP server)
+# Prefers a globally installed `claw-memory`; falls back to npx. stdin/stdout are
+# inherited so hook input and MCP stdio pass through. Never blocks a session:
+# hook failures are swallowed, but `mcp` must exec directly (no error masking).
 set -euo pipefail
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-MODE="${1:-recall}"
-cat | node "${DIR}/../dist/cli.js" hook "${MODE}" 2>/dev/null || true
+
+run() {
+  if command -v claw-memory >/dev/null 2>&1; then
+    exec claw-memory "$@"
+  fi
+  exec npx -y @nogataka/claw-memory@latest "$@"
+}
+
+if [ "${1:-}" = "mcp" ]; then
+  run "$@"
+else
+  run "$@" 2>/dev/null || true
+fi

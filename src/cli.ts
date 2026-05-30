@@ -78,6 +78,63 @@ async function main() {
       await runRecallHook(await readStdinJson());
       process.exit(0);
     }
+    case "install": {
+      const target = hasFlag(rest, "claude-code") ? "claude" : "codex";
+      if (target === "codex") {
+        const { installCodex } = await import("./core/installer/codex.js");
+        console.log("claw-memory installed for Codex:\n  " + installCodex().join("\n  "));
+        console.log("\n注意: Codex を再起動してください。自動 distill は手動 (`claw-memory distill-codex --recent`)。");
+      } else {
+        const { installClaude } = await import("./core/installer/claude.js");
+        console.log("claw-memory installed for Claude Code (manual):\n  " + installClaude().join("\n  "));
+        console.log("\n注意: Claude Code を再起動してください。プラグイン利用時はこの手動設定は不要です。");
+      }
+      process.exit(0);
+    }
+    case "uninstall": {
+      const target = hasFlag(rest, "claude-code") ? "claude" : "codex";
+      if (target === "codex") {
+        const { uninstallCodex } = await import("./core/installer/codex.js");
+        console.log("removed:\n  " + uninstallCodex().join("\n  "));
+      } else {
+        const { uninstallClaude } = await import("./core/installer/claude.js");
+        console.log("removed:\n  " + uninstallClaude().join("\n  "));
+      }
+      process.exit(0);
+    }
+    case "distill-codex": {
+      const { listCodexSessionFiles, codexSessionId } = await import("./core/logsearch/recent.js");
+      const { parseCodexSession } = await import("./core/logsearch/parse.js");
+      const { distill } = await import("./core/distill.js");
+      const { getOrCreateProjectByPath } = await import("./core/projects.js");
+      const { shouldDistill, markDistilled } = await import("./core/watermark.js");
+      const { isExcludedPath } = await import("./core/excludes.js");
+      const { statSync, readFileSync } = await import("node:fs");
+
+      const all = hasFlag(rest, "all");
+      const limit = Number(getFlag(rest, "limit") ?? (all ? 100000 : 20));
+      const files = (await listCodexSessionFiles()).slice(0, limit);
+      let distilled = 0, skipped = 0, failed = 0;
+      for (const f of files) {
+        let mtimeMs = 0;
+        try { mtimeMs = statSync(f.path).mtimeMs; } catch { continue; }
+        if (!shouldDistill(f.path, mtimeMs)) { skipped++; continue; }
+        let cwd = process.cwd();
+        try { const c = parseCodexSession(readFileSync(f.path, "utf-8")).cwd; if (c) cwd = c; } catch { /* keep default */ }
+        if (isExcludedPath(cwd)) { markDistilled(f.path, mtimeMs); skipped++; continue; }
+        const project = getOrCreateProjectByPath(cwd);
+        try {
+          const res = await distill({ projectId: project.id, sessionId: codexSessionId(f.path), transcriptPath: f.path });
+          markDistilled(f.path, mtimeMs);
+          if ((res as { skipped?: boolean }).skipped) skipped++; else distilled++;
+        } catch (e) {
+          failed++;
+          console.error(`distill failed ${f.path}: ${String(e)}`);
+        }
+      }
+      console.log(JSON.stringify({ scanned: files.length, distilled, skipped, failed }, null, 2));
+      process.exit(0);
+    }
     case "remember": {
       const { getOrCreateProjectByPath } = await import("./core/projects.js");
       const { rememberText } = await import("./core/distill.js");
@@ -117,14 +174,17 @@ async function main() {
     }
     default:
       console.error(
-        "Usage: claw-memory <mcp|ui|distill|remember|search-logs|hook|inject-recall>\n" +
+        "Usage: claw-memory <command>\n" +
           "  mcp                       start stdio MCP server\n" +
           "  ui [--port N] [--open]    start memory viewer\n" +
           "  distill --cwd P --session ID [--path FILE] [--if-stale]\n" +
+          "  distill-codex [--recent] [--limit N] [--all]   distill recent Codex sessions\n" +
           "  remember --cwd P \"text\"\n" +
           "  search-logs \"query\" [--source claude-code,codex] [--project P] [--start ISO] [--end ISO] [--limit N] [--offset N]\n" +
           "  hook <distill|recall>     run a Claude Code lifecycle hook (reads JSON on stdin)\n" +
-          "  inject-recall             alias for `hook recall`"
+          "  inject-recall             alias for `hook recall`\n" +
+          "  install [--codex|--claude-code]     register MCP + hooks (default: codex)\n" +
+          "  uninstall [--codex|--claude-code]   remove claw-memory config"
       );
       process.exit(cmd ? 1 : 0);
   }

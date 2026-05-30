@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "claw-memory": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/hooks/claw-hook.sh",
+      "args": ["mcp"]
+    }
+  }
+}

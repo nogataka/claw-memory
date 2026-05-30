@@ -1,0 +1,9 @@
+{
+  "name": "claw-memory",
+  "version": "0.1.0",
+  "description": "Local semantic memory for Claude Code: auto-distills sessions, injects relevant past context, and searches raw Claude Code + Codex transcripts. sqlite-vec + local embeddings, no daemon, no Python.",
+  "author": { "name": "nogataka" },
+  "repository": "https://github.com/nogataka/claw-memory",
+  "license": "MIT",
+  "keywords": ["memory", "mcp", "context", "search", "codex"]
+}
