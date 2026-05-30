@@ -12,22 +12,23 @@ export const PAGE = /* html */ `<!doctype html>
           --accent:#58a6ff; --chip:#21262d; }
   * { box-sizing:border-box; }
   body { margin:0; font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-         background:var(--bg); color:var(--fg); }
+         background:var(--bg); color:var(--fg);
+         height:100vh; overflow:hidden; display:flex; flex-direction:column; }
   header { display:flex; align-items:center; gap:12px; padding:12px 18px;
-           border-bottom:1px solid var(--border); background:var(--panel); position:sticky; top:0; }
+           border-bottom:1px solid var(--border); background:var(--panel); flex:0 0 auto; }
   header h1 { font-size:15px; margin:0; font-weight:600; }
   header .muted { color:var(--muted); font-size:12px; }
   #search { margin-left:auto; background:var(--bg); border:1px solid var(--border); color:var(--fg);
             border-radius:6px; padding:6px 10px; width:280px; }
-  .layout { display:flex; min-height:calc(100vh - 50px); }
-  nav { width:240px; border-right:1px solid var(--border); padding:10px; overflow:auto; }
+  .layout { display:flex; flex:1; min-height:0; }
+  nav { width:240px; border-right:1px solid var(--border); padding:10px; overflow-y:auto; min-height:0; }
   nav button { display:block; width:100%; text-align:left; background:transparent; color:var(--fg);
                border:0; border-radius:6px; padding:8px 10px; cursor:pointer; font-size:13px; }
   nav button:hover { background:var(--chip); }
   nav button.active { background:var(--chip); border:1px solid var(--border); }
   nav .nm { font-weight:600; }
   nav .pth { color:var(--muted); font-size:11px; word-break:break-all; }
-  main { flex:1; padding:18px; overflow:auto; }
+  main { flex:1; padding:18px; overflow-y:auto; min-height:0; }
   .sect { margin-bottom:26px; }
   .sect h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted);
              margin:0 0 10px; }
