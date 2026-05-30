@@ -1,0 +1,38 @@
+{
+  "name": "claw-memory",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Independent, in-process semantic memory MCP server (sqlite-vec + local Xenova e5) with a lightweight web viewer. No daemon, no Python.",
+  "bin": {
+    "claw-memory": "./dist/cli.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "prebuild": "npm run clean",
+    "mcp": "node dist/cli.js mcp",
+    "ui": "node dist/cli.js ui --open",
+    "dev:mcp": "tsx src/cli.ts mcp",
+    "dev:ui": "tsx src/cli.ts ui --open"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.44",
+    "@hono/node-server": "^1.13.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@xenova/transformers": "^2.17.2",
+    "better-sqlite3": "12.8.0",
+    "hono": "^4.6.0",
+    "sqlite-vec": "^0.1.7-alpha.2",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
