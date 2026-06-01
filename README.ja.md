@@ -281,6 +281,14 @@ claw-memory uninstall [--codex | --claude-code]
 claw-memory ui --open        # http://localhost:4319
 ```
 
+**Claude Code プラグインだけ**で導入した場合（グローバル npm 未導入）、`claw-memory`
+コマンドは `PATH` に乗りません。その場合は `npx` 経由で起動してください。
+
+```bash
+npx @nogataka/claw-memory ui --open       # http://localhost:4319
+npx @nogataka/claw-memory ui --port 5000 --open
+```
+
 読み取り専用。プロジェクト・要約・会話チャンク（type / concepts / files 付き）・好みを
 閲覧でき、**🔎 ログ検索** で Claude Code + Codex の生ログを全文検索できます。開いている間
 は SSE で自動更新。それ以外はバックグラウンドで何も動きません — 確認したい時だけ起動して

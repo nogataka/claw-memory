@@ -286,6 +286,14 @@ session ends (Stop hook / distill-codex)   session starts (SessionStart hook / m
 claw-memory ui --open        # http://localhost:4319
 ```
 
+If you installed via the **Claude Code plugin only** (no global npm install), the
+`claw-memory` binary isn't on your `PATH`. Run the viewer through `npx` instead:
+
+```bash
+npx @nogataka/claw-memory ui --open       # http://localhost:4319
+npx @nogataka/claw-memory ui --port 5000 --open
+```
+
 Read-only. Browse projects, session summaries, conversation chunks (with type /
 concepts / files), and preferences; toggle **🔎 ログ検索** to full-text search raw
 Claude Code + Codex transcripts. Live-updates via SSE while open. Nothing runs in the

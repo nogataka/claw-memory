@@ -79,6 +79,11 @@ async function completeAgentSdk(prompt: string, model: string): Promise<string> 
       maxTurns: 1,
       allowedTools: [],
       permissionMode: "bypassPermissions",
+      // SDK isolation: do NOT load ~/.claude or project settings into the
+      // distillation sub-session. Otherwise the user's own hooks (e.g. a Stop
+      // hook that plays a sound) and claw-memory's own hooks fire on every
+      // spawned sub-session — a beep storm and needless recursion.
+      settingSources: [],
       env: buildFullSdkEnv(),
     },
   });
