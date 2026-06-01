@@ -132,9 +132,27 @@ Claude Code を再起動してください。次が自動登録されます。
 > **プラグインを使わない場合**: `claw-memory install --claude-code` で MCP サーバーと
 > フックを `~/.claude/settings.json` にマージできます（冪等・バックアップ付き）。
 
-### 手順 2b — Codex（インストーラ）
+### 手順 2b — Codex（プラグイン）
 
-Codex には第三者プラグインのマーケットプレイスが無いため、インストーラで登録します。
+Codex は Claude Code と同じプラグイン形式に対応しています。claw-memory は
+`.codex-plugin/plugin.json` を同梱しているため、Codex プラグインとして導入すると
+MCP サーバーと**ライフサイクル hooks の両方**が登録され、Claude Code と同等になります。
+
+```
+codex
+/plugins
+```
+
+プラグインは Codex が互換提供する `${CLAUDE_PLUGIN_ROOT}` を介して次を登録します。
+
+- `claw-memory` MCP サーバー（`.mcp.json`）
+- `SessionStart` / `UserPromptSubmit` → **recall 自動注入**（memory ブロックを developer context として）
+- `Stop` → 最近の Codex セッションの**自動 distill**（watermark 重複回避・非同期）
+- `memory-recall` skill
+
+### 手順 2b（代替）— Codex（インストーラ／マーケット非経由）
+
+マーケットプレイスではなく npm から導入する場合は CLI で登録します。
 
 ```bash
 claw-memory install --codex
@@ -143,11 +161,12 @@ claw-memory install --codex
 これは冪等に次を行います。
 
 - `~/.codex/config.toml` に `[mcp_servers.claw-memory]` を追記（`config.toml.bak` にバックアップ）
+- `~/.codex/hooks.json` に recall/distill hooks をマージ（バックアップあり・既存 hook は保全）
 - `memory-recall` skill を配置
 - `AGENTS.md` に「セッション冒頭で `memory_recall` を呼ぶ」指示を追記
 
-Codex を再起動してください。**Codex 側の自動 distill は手動のみ**（Stop フック相当が無い
-ため）。定期的に自分で実行します。
+Codex を再起動してください。**recall 注入・自動 distill は hooks で自動実行**され、手動操作は不要です。
+必要に応じて手動バックフィルも可能です。
 
 ```bash
 claw-memory distill-codex --recent     # 最近の Codex セッションを蒸留（watermark で重複回避）
@@ -272,7 +291,7 @@ claw-memory ui --open        # http://localhost:4319
 ## アンインストール
 
 ```bash
-claw-memory uninstall --codex          # config.toml ブロック + skill + AGENTS 記述を除去
+claw-memory uninstall --codex          # config.toml ブロック + hooks + skill + AGENTS 記述を除去
 claw-memory uninstall --claude-code    # settings.json から mcp + フックを除去
 # Claude Code プラグイン: /plugin uninstall claw-memory
 npm uninstall -g @nogataka/claw-memory

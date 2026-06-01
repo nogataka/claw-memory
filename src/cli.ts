@@ -83,7 +83,7 @@ async function main() {
       if (target === "codex") {
         const { installCodex } = await import("./core/installer/codex.js");
         console.log("claw-memory installed for Codex:\n  " + installCodex().join("\n  "));
-        console.log("\n注意: Codex を再起動してください。自動 distill は手動 (`claw-memory distill-codex --recent`)。");
+        console.log("\n注意: Codex を再起動してください。recall 注入・自動 distill は hooks で自動実行されます。");
       } else {
         const { installClaude } = await import("./core/installer/claude.js");
         console.log("claw-memory installed for Claude Code (manual):\n  " + installClaude().join("\n  "));

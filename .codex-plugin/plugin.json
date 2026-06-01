@@ -1,0 +1,16 @@
+{
+  "name": "claw-memory",
+  "version": "0.1.2",
+  "description": "Local semantic memory for Codex: auto-distills sessions, injects relevant past context via hooks, and searches raw Codex + Claude Code transcripts. sqlite-vec + local embeddings, no daemon, no Python.",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "hooks": "./hooks/hooks.codex.json",
+  "interface": {
+    "displayName": "claw-memory",
+    "shortDescription": "Local semantic memory + transcript search for Codex",
+    "longDescription": "Auto-distills finished sessions into a local sqlite-vec store, injects relevant preferences and past-conversation context at session start via hooks, and exposes memory_recall / memory_search / memory_search_logs MCP tools. Runs fully local with Xenova e5 embeddings — no daemon, no Python.",
+    "developerName": "nogataka",
+    "category": "productivity",
+    "capabilities": ["memory", "context", "search"]
+  }
+}

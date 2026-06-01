@@ -22,7 +22,18 @@ import {
 const CODEX_DIR = join(homedir(), ".codex");
 const CONFIG = join(CODEX_DIR, "config.toml");
 const AGENTS = join(CODEX_DIR, "AGENTS.md");
+const HOOKS = join(CODEX_DIR, "hooks.json");
 const SKILL_DIR = join(CODEX_DIR, "skills", "memory-recall");
+
+// Codex lifecycle hooks for the manual (non-plugin) install path. Mirrors the
+// Claude Code hook wiring: recall on session start / prompt, distill on stop.
+// Codex Stop carries no Claude-format transcript, so distill scans recent Codex
+// session files (watermark-guarded) instead of a single transcript_path.
+const HOOK_EVENTS: Array<["SessionStart" | "UserPromptSubmit" | "Stop", string, boolean]> = [
+  ["SessionStart", "hook recall", false],
+  ["UserPromptSubmit", "hook recall", false],
+  ["Stop", "distill-codex --limit 5", true],
+];
 
 const BEGIN = "# >>> claw-memory >>>";
 const END = "# <<< claw-memory <<<";
@@ -36,16 +47,76 @@ function tomlStr(s: string): string {
 
 /** Prefer a globally installed `claw-memory`; otherwise run via npx. */
 function resolveCommand(): { command: string; args: string[] } {
+  const bin = resolveBin();
+  return bin
+    ? { command: bin, args: ["mcp"] }
+    : { command: "npx", args: ["-y", "@nogataka/claw-memory@latest", "mcp"] };
+}
+
+/** Absolute path to a globally installed `claw-memory`, or null. */
+function resolveBin(): string | null {
   try {
     const found = execFileSync("command", ["-v", "claw-memory"], {
       shell: "/bin/bash",
       encoding: "utf-8",
-    }).trim();
-    if (found) return { command: found.split("\n")[0], args: ["mcp"] };
+    }).trim().split("\n")[0];
+    return found || null;
   } catch {
-    // not on PATH
+    return null;
   }
-  return { command: "npx", args: ["-y", "@nogataka/claw-memory@latest", "mcp"] };
+}
+
+/** How to invoke the CLI from a hook command line. */
+function cliInvoker(): string {
+  return resolveBin() ?? "npx -y @nogataka/claw-memory@latest";
+}
+
+type HooksFile = {
+  hooks?: Record<string, Array<{ hooks: Array<{ type: string; command: string; async?: boolean }> }>>;
+};
+
+function readHooks(): HooksFile {
+  if (!existsSync(HOOKS)) return {};
+  try {
+    return JSON.parse(readFileSync(HOOKS, "utf-8")) as HooksFile;
+  } catch {
+    return {};
+  }
+}
+
+/** A hook command is ours if it runs the claw-memory CLI recall/distill subcommand. */
+function isOurHook(cmd: string): boolean {
+  return cmd.includes("claw-memory") && (cmd.includes("hook recall") || cmd.includes("distill-codex"));
+}
+
+/** Merge our recall/distill hooks into ~/.codex/hooks.json, replacing stale ones. */
+function installHooks(): void {
+  const cli = cliInvoker();
+  const f = readHooks();
+  f.hooks = f.hooks ?? {};
+  for (const [event, sub, isAsync] of HOOK_EVENTS) {
+    const list = (f.hooks[event] ?? []).filter((g) => !g.hooks?.some((h) => isOurHook(h.command)));
+    list.push({ hooks: [{ type: "command", command: `${cli} ${sub}`, async: isAsync }] });
+    f.hooks[event] = list;
+  }
+  if (existsSync(HOOKS)) copyFileSync(HOOKS, HOOKS + ".bak");
+  writeFileSync(HOOKS, JSON.stringify(f, null, 2) + "\n");
+}
+
+/** Remove our hooks from ~/.codex/hooks.json, preserving the user's own. */
+function removeHooks(): boolean {
+  if (!existsSync(HOOKS)) return false;
+  const f = readHooks();
+  if (!f.hooks) return false;
+  for (const event of Object.keys(f.hooks)) {
+    f.hooks[event] = f.hooks[event]
+      .map((g) => ({ ...g, hooks: (g.hooks ?? []).filter((h) => !isOurHook(h.command)) }))
+      .filter((g) => g.hooks.length > 0);
+    if (f.hooks[event].length === 0) delete f.hooks[event];
+  }
+  copyFileSync(HOOKS, HOOKS + ".bak");
+  writeFileSync(HOOKS, JSON.stringify(f, null, 2) + "\n");
+  return true;
 }
 
 /** Insert or replace the marker-delimited block in `content`. */
@@ -115,6 +186,10 @@ export function installCodex(): string[] {
   writeFileSync(AGENTS, upsertBlock(agentsPrev, A_BEGIN, A_END, agentsBlock));
   done.push("AGENTS.md: recall instruction");
 
+  // 4) lifecycle hooks: auto recall (SessionStart/UserPromptSubmit) + auto distill (Stop)
+  installHooks();
+  done.push("hooks.json: SessionStart/UserPromptSubmit→recall, Stop→distill-codex");
+
   return done;
 }
 
@@ -128,6 +203,9 @@ export function uninstallCodex(): string[] {
   if (existsSync(AGENTS)) {
     writeFileSync(AGENTS, removeBlock(readFileSync(AGENTS, "utf-8"), A_BEGIN, A_END));
     done.push("AGENTS.md: removed claw-memory block");
+  }
+  if (removeHooks()) {
+    done.push("hooks.json: removed claw-memory hooks");
   }
   try {
     rmSync(SKILL_DIR, { recursive: true, force: true });

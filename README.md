@@ -137,9 +137,27 @@ No manual config. To verify, run `/mcp` and look for `claw-memory`.
 > **Not using the plugin?** Run `claw-memory install --claude-code` to merge the MCP
 > server and hooks into `~/.claude/settings.json` (idempotent, backs up the file).
 
-### Step 2b — Codex (installer)
+### Step 2b — Codex (plugin)
 
-Codex has no third-party plugin marketplace, so register via the installer:
+Codex supports the same plugin format as Claude Code. claw-memory ships a
+`.codex-plugin/plugin.json` manifest, so installing it as a Codex plugin wires up
+the MCP server **and** the lifecycle hooks — full parity with Claude Code:
+
+```
+codex
+/plugins
+```
+
+The plugin registers, via Codex's `${CLAUDE_PLUGIN_ROOT}` (provided for compatibility):
+
+- the `claw-memory` MCP server (`.mcp.json`),
+- `SessionStart` / `UserPromptSubmit` → **auto recall injection** (memory block as developer context),
+- `Stop` → **auto distill** of recent Codex sessions (watermark-deduped, async), and
+- the `memory-recall` skill.
+
+### Step 2b (alt) — Codex (installer, no marketplace)
+
+If you install from npm instead of the plugin marketplace, register via the CLI:
 
 ```bash
 claw-memory install --codex
@@ -148,11 +166,12 @@ claw-memory install --codex
 This idempotently:
 
 - adds `[mcp_servers.claw-memory]` to `~/.codex/config.toml` (backed up to `config.toml.bak`),
+- merges recall/distill hooks into `~/.codex/hooks.json` (backed up; your own hooks are preserved),
 - installs the `memory-recall` skill, and
 - appends an `AGENTS.md` instruction telling the agent to call `memory_recall` at session start.
 
-Restart Codex. **Auto-distill is manual on Codex** (no equivalent of the Stop hook) — run
-it yourself periodically:
+Restart Codex. **Recall injection and auto-distill now run via hooks** — no manual step needed.
+You can still backfill on demand:
 
 ```bash
 claw-memory distill-codex --recent     # distill recent Codex sessions (watermark-deduped)
@@ -277,7 +296,7 @@ background otherwise — start it only when you want to inspect.
 ## Uninstall
 
 ```bash
-claw-memory uninstall --codex          # remove config.toml block + skill + AGENTS note
+claw-memory uninstall --codex          # remove config.toml block + hooks + skill + AGENTS note
 claw-memory uninstall --claude-code    # remove mcp + hooks from settings.json
 # Claude Code plugin: /plugin uninstall claw-memory
 npm uninstall -g @nogataka/claw-memory
