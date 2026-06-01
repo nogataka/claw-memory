@@ -2,6 +2,8 @@
 
 **English** | [日本語](README.ja.md)
 
+![claw-memory memory viewer](docs/screenshot.png)
+
 **Local, in-process long-term memory for AI coding agents (Claude Code & Codex).**
 Your agent remembers past sessions, your preferences, and prior decisions — and can
 search every raw transcript you've ever recorded. No daemon, no Python, no external
