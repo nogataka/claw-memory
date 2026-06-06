@@ -235,6 +235,17 @@ async function main() {
           console.log(ok ? `${oldId} superseded by ${newId}` : "(該当なし)");
           process.exit(ok ? 0 : 1);
         }
+        case "decay": {
+          const { decayConfidence, listStale } = await import("./core/lesson-quality.js");
+          const dryRun = hasFlag(subRest, "dry");
+          const res = decayConfidence({
+            factor: getFlag(subRest, "factor") ? Number(getFlag(subRest, "factor")) : undefined,
+            staleDays: getFlag(subRest, "days") ? Number(getFlag(subRest, "days")) : undefined,
+            dryRun,
+          });
+          console.log(JSON.stringify({ ...res, dryRun, stale: listStale().length }, null, 2));
+          process.exit(0);
+        }
         case "extract": {
           const { getOrCreateProjectByPath } = await import("./core/projects.js");
           const { resolveSessionJsonl, loadTranscript } = await import("./core/transcript.js");
@@ -262,7 +273,8 @@ async function main() {
               "  approve <lesson_id>\n" +
               "  reject <lesson_id> [--reason R]\n" +
               "  archive <lesson_id> [--reason R]\n" +
-              "  supersede <old_id> <new_id>"
+              "  supersede <old_id> <new_id>\n" +
+              "  decay [--days N] [--factor F] [--dry]"
           );
           process.exit(sub ? 1 : 0);
       }
