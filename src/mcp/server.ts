@@ -18,9 +18,13 @@ import { buildMemoryBlock } from "../core/recall.js";
 import { searchIndex } from "../core/search.js";
 import { getChunksByIds, forgetChunks } from "../core/vector-memory.js";
 import { distill, rememberText } from "../core/distill.js";
-import { resolveSessionJsonl } from "../core/transcript.js";
+import { resolveSessionJsonl, loadTranscript } from "../core/transcript.js";
 import { searchLogs, type LogSource } from "../core/logsearch/search.js";
 import { isExcludedPath } from "../core/excludes.js";
+import { stripPrivate } from "../core/private.js";
+import { searchLessons, injectLessons } from "../core/lesson-search.js";
+import { getLesson, setStatus, supersede, getEvents, getLinks } from "../core/lessons.js";
+import { saveCandidates, extractDedicated } from "../core/lesson-extract.js";
 
 function projectFor(cwd?: string) {
   return getOrCreateProjectByPath(cwd && cwd.trim() ? cwd : process.cwd());
@@ -133,6 +137,102 @@ const TOOLS = [
         offset: { type: "number", description: "Skip N hits (default 0)." },
       },
       required: ["query"],
+    },
+  },
+  {
+    name: "lesson_search",
+    description:
+      "Search reusable LESSONS (distilled, abstracted knowledge: bug-fix patterns, project constraints, design decisions) relevant to a task. Only approved lessons are returned, ranked by semantic + scope + confidence + recency. Use when starting a task to recall how similar problems were solved before.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Task / problem to find lessons for." },
+        cwd: { type: "string" },
+        limit: { type: "number", description: "Max lessons (default 5)." },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "lesson_inject",
+    description:
+      "Like lesson_search, but returns a ready-to-read <relevant-lessons> context block (hints, not absolute facts) to drop into an agent's context.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string" },
+        cwd: { type: "string" },
+        limit: { type: "number", description: "Max lessons (default 5)." },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "lesson_get",
+    description:
+      "Fetch one lesson's full detail (all fields + status history + linked lessons) by id.",
+    inputSchema: {
+      type: "object",
+      properties: { lesson_id: { type: "string" } },
+      required: ["lesson_id"],
+    },
+  },
+  {
+    name: "lesson_extract",
+    description:
+      "Run a dedicated lesson-extraction pass over a finished session transcript and store the candidates. Provide a sessionId (resolved under cwd) or an explicit transcriptPath. Requires LLM credentials.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cwd: { type: "string" },
+        sessionId: { type: "string" },
+        transcriptPath: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "lesson_approve",
+    description: "Promote a candidate lesson to 'approved' (then it surfaces in lesson_search / recall).",
+    inputSchema: {
+      type: "object",
+      properties: { lesson_id: { type: "string" } },
+      required: ["lesson_id"],
+    },
+  },
+  {
+    name: "lesson_reject",
+    description: "Reject a candidate lesson (wrong / too specific / temporary).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        lesson_id: { type: "string" },
+        reason: { type: "string" },
+      },
+      required: ["lesson_id"],
+    },
+  },
+  {
+    name: "lesson_archive",
+    description: "Archive a lesson that is outdated but worth keeping as history.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        lesson_id: { type: "string" },
+        reason: { type: "string" },
+      },
+      required: ["lesson_id"],
+    },
+  },
+  {
+    name: "lesson_supersede",
+    description: "Replace an old lesson with a newer one (old becomes 'superseded' and is linked).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        old_lesson_id: { type: "string" },
+        new_lesson_id: { type: "string" },
+      },
+      required: ["old_lesson_id", "new_lesson_id"],
     },
   },
 ] as const;
@@ -272,6 +372,91 @@ async function dispatch(name: string, args: Record<string, unknown>): Promise<st
         return `- [${date}] (${r.source}/${r.role}) ${basename(r.projectPath)} #${r.sessionId.slice(0, 8)}\n  …${ctx}…`;
       });
       return `${total}件ヒット (上位${results.length}件表示):\n${lines.join("\n")}`;
+    }
+    case "lesson_search": {
+      const project = projectFor(args.cwd as string | undefined);
+      const hits = await searchLessons(
+        String(args.query ?? ""),
+        { projectId: project.id },
+        { limit: (args.limit as number) ?? 5 }
+      );
+      if (hits.length === 0) return "(該当なし)";
+      return hits
+        .map(
+          (l) =>
+            `- id=${l.id} [${l.scope}] (conf=${l.confidence.toFixed(2)} score=${l.score.toFixed(2)}) ${l.title}`
+        )
+        .join("\n");
+    }
+    case "lesson_inject": {
+      const project = projectFor(args.cwd as string | undefined);
+      const block = await injectLessons(
+        String(args.query ?? ""),
+        { projectId: project.id },
+        { limit: (args.limit as number) ?? 5 }
+      );
+      return block || "(該当する approved lesson なし)";
+    }
+    case "lesson_get": {
+      const lesson = getLesson(String(args.lesson_id ?? ""));
+      if (!lesson) return "(該当なし)";
+      const events = getEvents(lesson.id);
+      const links = getLinks(lesson.id);
+      const parts = [
+        `# ${lesson.title}`,
+        `id=${lesson.id} | scope=${lesson.scope} | status=${lesson.status} | confidence=${lesson.confidence.toFixed(2)}`,
+        `\n${lesson.lesson}`,
+        lesson.appliesWhen.length ? `\nApplies when:\n${lesson.appliesWhen.map((s) => `- ${s}`).join("\n")}` : "",
+        lesson.avoidWhen.length ? `\nAvoid when:\n${lesson.avoidWhen.map((s) => `- ${s}`).join("\n")}` : "",
+        lesson.evidence ? `\nEvidence: ${lesson.evidence}` : "",
+        lesson.concepts.length ? `\nConcepts: ${lesson.concepts.join(", ")}` : "",
+        lesson.files.length ? `\nFiles: ${lesson.files.join(", ")}` : "",
+        lesson.sessionId ? `\nSource session: ${lesson.sessionId}` : "",
+        events.length ? `\nHistory: ${events.map((e) => `${e.eventType}(${e.oldStatus ?? "-"}→${e.newStatus ?? "-"})`).join(", ")}` : "",
+        links.length ? `\nLinks: ${links.map((k) => `${k.relation}→${k.linkedLessonId === lesson.id ? k.lessonId : k.linkedLessonId}`).join(", ")}` : "",
+      ];
+      return parts.filter(Boolean).join("\n");
+    }
+    case "lesson_extract": {
+      const cwd = (args.cwd as string) ?? process.cwd();
+      if (isExcludedPath(cwd)) return JSON.stringify({ skipped: "excluded project" });
+      const project = getOrCreateProjectByPath(cwd);
+      const sessionId = (args.sessionId as string) ?? "";
+      const transcriptPath =
+        (args.transcriptPath as string) ??
+        (sessionId ? resolveSessionJsonl(cwd, sessionId) : undefined);
+      if (!transcriptPath) {
+        throw new Error("lesson_extract requires sessionId or transcriptPath");
+      }
+      const messages = loadTranscript(transcriptPath)
+        .map((m) => ({ ...m, text: stripPrivate(m.text) }))
+        .filter((m) => m.text.trim());
+      const transcript = messages
+        .map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.text.slice(0, 500)}`)
+        .join("\n");
+      const candidates = await extractDedicated(transcript);
+      const ids = await saveCandidates({
+        projectId: project.id,
+        sessionId: sessionId || transcriptPath,
+        candidates,
+      });
+      return JSON.stringify({ extracted: candidates.length, saved: ids.length });
+    }
+    case "lesson_approve": {
+      const ok = setStatus(String(args.lesson_id ?? ""), "approved");
+      return ok ? "approved" : "(該当なし)";
+    }
+    case "lesson_reject": {
+      const ok = setStatus(String(args.lesson_id ?? ""), "rejected", args.reason as string | undefined);
+      return ok ? "rejected" : "(該当なし)";
+    }
+    case "lesson_archive": {
+      const ok = setStatus(String(args.lesson_id ?? ""), "archived", args.reason as string | undefined);
+      return ok ? "archived" : "(該当なし)";
+    }
+    case "lesson_supersede": {
+      const ok = supersede(String(args.old_lesson_id ?? ""), String(args.new_lesson_id ?? ""));
+      return ok ? "superseded" : "(該当なし)";
     }
     default:
       throw new Error(`unknown tool: ${name}`);

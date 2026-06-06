@@ -172,6 +172,102 @@ async function main() {
       console.log(JSON.stringify(out, null, 2));
       process.exit(0);
     }
+    case "lessons": {
+      const sub = rest[0];
+      const subRest = rest.slice(1);
+      const positionals = (args: string[]) => {
+        const out: string[] = [];
+        for (let i = 0; i < args.length; i++) {
+          if (args[i].startsWith("--")) { i++; continue; }
+          out.push(args[i]);
+        }
+        return out;
+      };
+      const projectId = async () => {
+        const { getOrCreateProjectByPath } = await import("./core/projects.js");
+        return getOrCreateProjectByPath(getFlag(subRest, "cwd") ?? process.cwd()).id;
+      };
+
+      switch (sub) {
+        case "list": {
+          const { listLessons } = await import("./core/lessons.js");
+          const status = getFlag(subRest, "status");
+          const rows = listLessons({ status, projectId: getFlag(subRest, "cwd") ? await projectId() : undefined });
+          for (const l of rows) {
+            console.log(`${l.id}  [${l.status}/${l.scope}]  conf=${l.confidence.toFixed(2)}  ${l.title}`);
+          }
+          console.log(`(${rows.length} lessons)`);
+          process.exit(0);
+        }
+        case "search": {
+          const { searchLessons } = await import("./core/lesson-search.js");
+          const query = positionals(subRest).join(" ").trim();
+          if (!query) throw new Error("lessons search requires a query");
+          const hits = await searchLessons(query, { projectId: await projectId() }, { limit: Number(getFlag(subRest, "limit") ?? 5) });
+          for (const l of hits) {
+            console.log(`${l.id}  score=${l.score.toFixed(3)}  [${l.scope}]  ${l.title}`);
+          }
+          process.exit(0);
+        }
+        case "inject": {
+          const { injectLessons } = await import("./core/lesson-search.js");
+          const query = positionals(subRest).join(" ").trim();
+          if (!query) throw new Error("lessons inject requires a query");
+          console.log(await injectLessons(query, { projectId: await projectId() }, { limit: Number(getFlag(subRest, "limit") ?? 5) }));
+          process.exit(0);
+        }
+        case "approve":
+        case "reject":
+        case "archive": {
+          const { setStatus } = await import("./core/lessons.js");
+          const id = positionals(subRest)[0];
+          if (!id) throw new Error(`lessons ${sub} requires a lesson_id`);
+          const newStatus = sub === "approve" ? "approved" : sub === "reject" ? "rejected" : "archived";
+          const ok = setStatus(id, newStatus, getFlag(subRest, "reason"));
+          console.log(ok ? `${id} -> ${newStatus}` : "(該当なし)");
+          process.exit(ok ? 0 : 1);
+        }
+        case "supersede": {
+          const { supersede } = await import("./core/lessons.js");
+          const [oldId, newId] = positionals(subRest);
+          if (!oldId || !newId) throw new Error("lessons supersede requires <old_id> <new_id>");
+          const ok = supersede(oldId, newId);
+          console.log(ok ? `${oldId} superseded by ${newId}` : "(該当なし)");
+          process.exit(ok ? 0 : 1);
+        }
+        case "extract": {
+          const { getOrCreateProjectByPath } = await import("./core/projects.js");
+          const { resolveSessionJsonl, loadTranscript } = await import("./core/transcript.js");
+          const { stripPrivate } = await import("./core/private.js");
+          const { extractDedicated, saveCandidates } = await import("./core/lesson-extract.js");
+          const cwd = getFlag(subRest, "cwd") ?? process.cwd();
+          const session = getFlag(subRest, "session") ?? "";
+          const path = getFlag(subRest, "path") ?? (session ? resolveSessionJsonl(cwd, session) : undefined);
+          if (!path) throw new Error("lessons extract requires --session or --path");
+          const project = getOrCreateProjectByPath(cwd);
+          const msgs = loadTranscript(path).map((m) => ({ ...m, text: stripPrivate(m.text) })).filter((m) => m.text.trim());
+          const transcript = msgs.map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.text.slice(0, 500)}`).join("\n");
+          const candidates = await extractDedicated(transcript);
+          const ids = await saveCandidates({ projectId: project.id, sessionId: session || path, candidates });
+          console.log(JSON.stringify({ extracted: candidates.length, saved: ids.length }, null, 2));
+          process.exit(0);
+        }
+        default:
+          console.error(
+            "Usage: claw-memory lessons <subcommand>\n" +
+              "  list [--status candidate|approved|...] [--cwd P]\n" +
+              "  search \"query\" [--cwd P] [--limit N]\n" +
+              "  inject \"query\" [--cwd P] [--limit N]\n" +
+              "  extract --session ID [--cwd P] [--path FILE]\n" +
+              "  approve <lesson_id>\n" +
+              "  reject <lesson_id> [--reason R]\n" +
+              "  archive <lesson_id> [--reason R]\n" +
+              "  supersede <old_id> <new_id>"
+          );
+          process.exit(sub ? 1 : 0);
+      }
+      return;
+    }
     default:
       console.error(
         "Usage: claw-memory <command>\n" +
@@ -180,6 +276,7 @@ async function main() {
           "  distill --cwd P --session ID [--path FILE] [--if-stale]\n" +
           "  distill-codex [--recent] [--limit N] [--all]   distill recent Codex sessions\n" +
           "  remember --cwd P \"text\"\n" +
+          "  lessons <list|search|inject|extract|approve|reject|archive|supersede>\n" +
           "  search-logs \"query\" [--source claude-code,codex] [--project P] [--start ISO] [--end ISO] [--limit N] [--offset N]\n" +
           "  hook <distill|recall>     run a Claude Code lifecycle hook (reads JSON on stdin)\n" +
           "  inject-recall             alias for `hook recall`\n" +
