@@ -302,6 +302,37 @@ export function getLessonCount(filter?: LessonFilter): number {
   return row.c;
 }
 
+/** Lessons involved in a conflicts_with link (for Conflict Review). */
+export function listConflicts(
+  projectId?: string | null,
+  limit = 200
+): LessonRow[] {
+  const proj = projectId ? "AND l.project_id = ?" : "";
+  const rows = sqlite
+    .prepare(
+      `SELECT DISTINCT ${LESSON_COLS} FROM lessons l
+       INNER JOIN lesson_links k
+         ON (k.lesson_id = l.id OR k.linked_lesson_id = l.id)
+       WHERE k.relation = 'conflicts_with' AND l.status != 'rejected' ${proj}
+       ORDER BY l.updated_at DESC LIMIT ?`
+    )
+    .all(...(projectId ? [projectId] : []), limit) as RawLessonRow[];
+  return rows.map(mapRow);
+}
+
+export function getConflictCount(projectId?: string | null): number {
+  const proj = projectId ? "AND l.project_id = ?" : "";
+  const row = sqlite
+    .prepare(
+      `SELECT COUNT(DISTINCT l.id) c FROM lessons l
+       INNER JOIN lesson_links k
+         ON (k.lesson_id = l.id OR k.linked_lesson_id = l.id)
+       WHERE k.relation = 'conflicts_with' AND l.status != 'rejected' ${proj}`
+    )
+    .get(...(projectId ? [projectId] : [])) as { c: number };
+  return row.c;
+}
+
 /** KNN semantic search over lessons, filtered by project/scope inside MATCH. */
 export function searchSimilarLessons(
   queryEmbedding: Float32Array,

@@ -200,7 +200,7 @@ async function runLogSearch(q) {
 
 // --- Lessons view ---------------------------------------------------------
 let lessonMode = false, lessonStatus = "candidate";
-const LSTATUSES = ["candidate","approved","rejected","archived","superseded"];
+const LSTATUSES = ["candidate","approved","conflicts","rejected","archived","superseded"];
 
 el("lessonsBtn").addEventListener("click", () => {
   lessonMode = !lessonMode;

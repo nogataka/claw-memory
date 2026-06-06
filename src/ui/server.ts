@@ -13,6 +13,8 @@ import { listChunks, getChunkCount } from "../core/vector-memory.js";
 import { searchLogs, type LogSource } from "../core/logsearch/search.js";
 import {
   listLessons,
+  listConflicts,
+  getConflictCount,
   getLesson,
   getLessonCount,
   getEvents,
@@ -111,14 +113,21 @@ export function buildUiApp(): Hono {
   app.get("/api/lessons", (c) => {
     const projectId = c.req.query("project") || undefined;
     const status = c.req.query("status") || undefined;
+    // "conflicts" is a virtual view (lessons in a conflicts_with link), not a
+    // real status column value.
+    const lessons =
+      status === "conflicts"
+        ? listConflicts(projectId, 500)
+        : listLessons({ projectId, status }, 500);
     return c.json({
-      lessons: listLessons({ projectId, status }, 500),
+      lessons,
       counts: {
         candidate: getLessonCount({ projectId, status: "candidate" }),
         approved: getLessonCount({ projectId, status: "approved" }),
         rejected: getLessonCount({ projectId, status: "rejected" }),
         archived: getLessonCount({ projectId, status: "archived" }),
         superseded: getLessonCount({ projectId, status: "superseded" }),
+        conflicts: getConflictCount(projectId),
       },
     });
   });

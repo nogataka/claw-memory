@@ -15,9 +15,20 @@
 import { execFileSync } from "node:child_process";
 import { complete } from "./llm.js";
 import { embedPassage } from "./embeddings.js";
-import { saveLesson, type LessonScope } from "./lessons.js";
+import {
+  saveLesson,
+  linkLessons,
+  searchSimilarLessons,
+  getLesson,
+  type LessonScope,
+  type LessonRelation,
+} from "./lessons.js";
 import { getProject } from "./projects.js";
 import { log } from "./logger.js";
+
+// Distance thresholds (cosine, 0..2) for relation classification.
+const DUP_DISTANCE = Number(process.env.LESSON_DUP_DISTANCE ?? 0.08);
+const RELATED_DISTANCE = Number(process.env.LESSON_RELATED_DISTANCE ?? 0.28);
 
 const VALID_SCOPES: LessonScope[] = [
   "global",
@@ -110,6 +121,12 @@ export async function saveCandidates(input: SaveCandidatesInput): Promise<string
       status: "candidate",
       embedding,
     });
+    // Detect duplicates / related / conflicts vs existing lessons (best-effort).
+    try {
+      await detectRelations({ lessonId: id, embedding, candidate: c });
+    } catch (err) {
+      console.error("[claw-memory] lesson relation detection failed:", err);
+    }
     ids.push(id);
   }
   log("lesson-extract", {
@@ -118,6 +135,107 @@ export async function saveCandidates(input: SaveCandidatesInput): Promise<string
     saved: ids.length,
   });
   return ids;
+}
+
+function shareAny(a: string[], b: string[]): boolean {
+  if (!a.length || !b.length) return false;
+  const set = new Set(a.map((s) => s.toLowerCase()));
+  return b.some((s) => set.has(s.toLowerCase()));
+}
+
+const CONFLICT_PROMPT = (a: string, b: string) => `次の2つのレッスンの関係を判定してください。
+
+Lesson A: ${a}
+Lesson B: ${b}
+
+関係を1つ選び JSON のみで回答:
+{"relation": "duplicate" | "conflict" | "related" | "none"}
+- duplicate: 実質同じ内容
+- conflict: 互いに矛盾する主張
+- related: 関連するが別の知識
+- none: 無関係`;
+
+function conflictLlmEnabled(): boolean {
+  return process.env.CLAW_MEMORY_LESSON_CONFLICT_LLM === "1";
+}
+
+export interface RelationResult {
+  duplicates: number;
+  related: number;
+  conflicts: number;
+}
+
+/**
+ * Compare a freshly-saved lesson against existing lessons and record
+ * lesson_links (duplicate / related_to / conflicts_with). Embedding distance
+ * gives duplicate/related deterministically; an opt-in LLM pass (env
+ * CLAW_MEMORY_LESSON_CONFLICT_LLM=1) adds semantic conflict detection. A
+ * detected conflict leaves the new lesson as 'candidate' for Conflict Review.
+ */
+export async function detectRelations(opts: {
+  lessonId: string;
+  embedding: Float32Array;
+  candidate: LessonCandidate;
+}): Promise<RelationResult> {
+  const result: RelationResult = { duplicates: 0, related: 0, conflicts: 0 };
+  const neighbors = searchSimilarLessons(opts.embedding, {
+    topK: 6,
+    maxDistance: RELATED_DISTANCE,
+  }).filter(
+    (n) =>
+      n.id !== opts.lessonId &&
+      n.status !== "rejected" &&
+      n.status !== "superseded"
+  );
+  if (neighbors.length === 0) return result;
+
+  const newConcepts = (opts.candidate.concepts ?? []).map(String);
+  const newFiles = (opts.candidate.files ?? []).map(String);
+  const link = (target: string, relation: LessonRelation) =>
+    linkLessons(opts.lessonId, target, relation);
+
+  // Deterministic: nearest neighbor classification by distance + overlap.
+  let llmDone = false;
+  for (const n of neighbors) {
+    if (n.distance <= DUP_DISTANCE) {
+      link(n.id, "duplicate");
+      result.duplicates++;
+      continue;
+    }
+    const overlaps = shareAny(newConcepts, n.concepts) || shareAny(newFiles, n.files);
+    // Opt-in LLM judgment on the closest overlapping neighbor only (1 call max).
+    if (conflictLlmEnabled() && !llmDone && overlaps) {
+      llmDone = true;
+      try {
+        const text = await complete({
+          prompt: CONFLICT_PROMPT(
+            `${opts.candidate.title}: ${opts.candidate.lesson}`,
+            `${n.title}: ${n.lesson}`
+          ),
+          tier: "simple",
+        });
+        const m = text.match(/"relation"\s*:\s*"(\w+)"/);
+        const rel = m?.[1];
+        if (rel === "conflict") {
+          link(n.id, "conflicts_with");
+          result.conflicts++;
+          continue;
+        }
+        if (rel === "duplicate") {
+          link(n.id, "duplicate");
+          result.duplicates++;
+          continue;
+        }
+      } catch {
+        // LLM unavailable — fall through to deterministic related link
+      }
+    }
+    if (overlaps) {
+      link(n.id, "related_to");
+      result.related++;
+    }
+  }
+  return result;
 }
 
 const DEDICATED_PROMPT = (transcript: string) => `あなたはAIコーディングセッションから、将来再利用可能なレッスンを抽出する役割です。
