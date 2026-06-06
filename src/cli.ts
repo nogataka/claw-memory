@@ -246,6 +246,28 @@ async function main() {
           console.log(JSON.stringify({ ...res, dryRun, stale: listStale().length }, null, 2));
           process.exit(0);
         }
+        case "export": {
+          const { exportLessons } = await import("./core/lesson-share.js");
+          const bundle = exportLessons({
+            projectId: getFlag(subRest, "cwd") ? await projectId() : undefined,
+            status: getFlag(subRest, "status"),
+          });
+          console.log(JSON.stringify(bundle, null, 2));
+          process.exit(0);
+        }
+        case "import": {
+          const { importLessons } = await import("./core/lesson-share.js");
+          const { readFileSync } = await import("node:fs");
+          const file = positionals(subRest)[0];
+          if (!file) throw new Error("lessons import requires a bundle file path");
+          const bundle = JSON.parse(readFileSync(file, "utf-8"));
+          const res = await importLessons(bundle, {
+            projectId: await projectId(),
+            status: getFlag(subRest, "status"),
+          });
+          console.log(JSON.stringify(res, null, 2));
+          process.exit(0);
+        }
         case "extract": {
           const { getOrCreateProjectByPath } = await import("./core/projects.js");
           const { resolveSessionJsonl, loadTranscript } = await import("./core/transcript.js");
@@ -274,7 +296,9 @@ async function main() {
               "  reject <lesson_id> [--reason R]\n" +
               "  archive <lesson_id> [--reason R]\n" +
               "  supersede <old_id> <new_id>\n" +
-              "  decay [--days N] [--factor F] [--dry]"
+              "  decay [--days N] [--factor F] [--dry]\n" +
+              "  export [--status S] [--cwd P]    print a portable JSON bundle\n" +
+              "  import <file> [--status S] [--cwd P]   import a bundle (default status: candidate)"
           );
           process.exit(sub ? 1 : 0);
       }

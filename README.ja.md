@@ -96,7 +96,19 @@ npm install -g @nogataka/claw-memory
 
 ビルド不要・読み取り専用のビューア（`claw-memory ui`）。プロジェクト・要約・チャンク
 （メタデータ付き）・好みを閲覧でき、生ログ検索も実行できます。SSE で開いている間は自動
-更新。起動した時だけ動きます。
+更新。起動した時だけ動きます。抽出されたレッスンをレビュー・承認・編集できる **Lessons**
+タブも備えています。
+
+### 8. 再利用可能なレッスン
+
+過去ログをそのまま検索するだけでなく、claw-memory は AI コーディングセッションを
+**再利用可能なレッスン**へと蒸留します。プロジェクト固有の制約、デバッグパターン、設計
+判断、ユーザーの開発方針などの、実行可能で抽象化された知識です。レッスンは通常の要約と
+同時に抽出され（追加の LLM 呼び出しなし）、ローカルに保存され、同じローカルモデルで埋め込
+まれ、（承認後のみ）類似タスク時に想起されます。各レッスンは `scope`・`confidence`・
+`applies_when` / `avoid_when` と、ライフサイクル（candidate → approved → archived /
+superseded）を持ち、重複・矛盾検出と時間経過による confidence 減衰を備えます。raw ログは
+根拠として保持しつつ、通常の想起では簡潔で再利用可能なレッスンを優先します。
 
 ---
 
@@ -199,9 +211,15 @@ npm link             # 任意: `claw-memory` バイナリを公開
 | `memory_get_preferences(cwd?)` | プロジェクトの保存済み好みを一覧。 |
 | `memory_search_logs(query, sources?, projectPath?, startDate?, endDate?, limit?, offset?)` | Claude Code + Codex の生ログを全文検索。 |
 | `memory_forget(ids)` | チャンクをソフト削除（検索 / recall / ビューアから除外）。 |
+| `lesson_search(query, cwd?, limit?)` | 承認済みレッスンを関連度 + scope + confidence で検索。 |
+| `lesson_inject(query, cwd?, limit?)` | 同上を `<relevant-lessons>` ブロックとして返す。 |
+| `lesson_get(lesson_id)` | レッスン1件の詳細（全フィールド + 履歴 + リンク）。 |
+| `lesson_extract(cwd, sessionId? \| transcriptPath?)` | セッションから専用のレッスン抽出（LLM 必要）。 |
+| `lesson_approve / lesson_reject / lesson_archive(lesson_id, reason?)` | ステータス遷移。 |
+| `lesson_supersede(old_lesson_id, new_lesson_id)` | 古いレッスンを新しいもので置き換え。 |
 
-`memory_distill`（LLM）と `memory_search_logs`（`~/.claude/projects`・`~/.codex/sessions`
-を直接読む）以外は完全ローカルで動作します。
+`memory_distill` / `lesson_extract`（LLM）と `memory_search_logs`
+（`~/.claude/projects`・`~/.codex/sessions` を直接読む）以外は完全ローカルで動作します。
 
 ---
 
@@ -220,6 +238,10 @@ npm link             # 任意: `claw-memory` バイナリを公開
 | `CLAW_MEMORY_EXCLUDED_PROJECTS` | — | 記録・想起しないパス部分文字列（カンマ/コロン区切り）。 |
 | `MEMORY_SIMILARITY_MAX_DISTANCE` | `0.6` | セマンティックヒットの最大コサイン距離（小さいほど厳格）。 |
 | `CLAW_MEMORY_UI_PORT` | `4319` | ビューアのポート。 |
+| `LESSON_RECALL_LIMIT` | `3` | recall ブロックに注入する承認済みレッスン数（`0` で無効）。 |
+| `CLAW_MEMORY_LESSON_DEDICATED` | — | `1` で専用の高品質レッスン抽出パスを実行（LLM 追加呼び出し）。 |
+| `CLAW_MEMORY_LESSON_CONFLICT_LLM` | — | `1` で抽出時に LLM による矛盾検出を有効化。 |
+| `LESSON_DECAY_FACTOR` / `LESSON_STALE_DAYS` | `0.9` / `30` | `lessons decay` の減衰係数と陳腐化しきい値。 |
 
 ### LLM バックエンド
 
@@ -244,6 +266,15 @@ claw-memory ui [--port N] [--open]               # 読み取り専用 Web ビュ
 claw-memory distill --cwd P --session ID [--path FILE] [--if-stale]
 claw-memory distill-codex [--recent] [--limit N] [--all]
 claw-memory remember --cwd P "メモ"
+claw-memory lessons list [--status candidate|approved|...] [--cwd P]
+claw-memory lessons search "クエリ" [--cwd P] [--limit N]
+claw-memory lessons inject "クエリ" [--cwd P] [--limit N]
+claw-memory lessons extract --session ID [--cwd P] [--path FILE]
+claw-memory lessons approve|reject|archive <lesson_id> [--reason R]
+claw-memory lessons supersede <old_id> <new_id>
+claw-memory lessons decay [--days N] [--factor F] [--dry]
+claw-memory lessons export [--status S] [--cwd P] > bundle.json
+claw-memory lessons import bundle.json [--status S] [--cwd P]
 claw-memory search-logs "クエリ" [--source claude-code,codex] [--project P]
                                  [--start ISO] [--end ISO] [--limit N] [--offset N]
 claw-memory hook <recall|distill>               # ライフサイクルフック（JSON を stdin で受領）
