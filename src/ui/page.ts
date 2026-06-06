@@ -43,17 +43,37 @@ export const PAGE = /* html */ `<!doctype html>
   .pref b { color:var(--accent); }
   .empty { color:var(--muted); padding:30px; text-align:center; }
   .cmeta { color:var(--muted); font-size:11px; margin:2px 0; word-break:break-all; }
-  header button#logsBtn { background:var(--chip); color:var(--fg); border:1px solid var(--border);
-    border-radius:6px; padding:6px 10px; cursor:pointer; font-size:12px; }
-  header button#logsBtn.on { background:var(--accent); color:#0d1117; border-color:var(--accent); }
+  header button#logsBtn, header button#lessonsBtn { background:var(--chip); color:var(--fg);
+    border:1px solid var(--border); border-radius:6px; padding:6px 10px; cursor:pointer; font-size:12px; }
+  header button#logsBtn.on, header button#lessonsBtn.on { background:var(--accent); color:#0d1117; border-color:var(--accent); }
   .src { color:var(--accent); font-size:10px; }
   .hl { background:#9e6a03; color:#fff; border-radius:2px; padding:0 1px; }
+  .lstatus { border-radius:4px; padding:1px 6px; font-size:10px; font-weight:600; }
+  .lstatus.candidate { background:#3a2d00; color:#e3b341; }
+  .lstatus.approved  { background:#03361a; color:#3fb950; }
+  .lstatus.rejected  { background:#3a0d0d; color:#f85149; }
+  .lstatus.archived  { background:#21262d; color:#8b949e; }
+  .lstatus.superseded{ background:#26203a; color:#a371f7; }
+  .lact { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+  .lact button, .lact select { background:var(--chip); color:var(--fg); border:1px solid var(--border);
+    border-radius:6px; padding:4px 9px; cursor:pointer; font-size:11px; }
+  .lact button:hover { background:var(--accent); color:#0d1117; }
+  .lact button.danger:hover { background:#f85149; color:#fff; }
+  .lbody { white-space:pre-wrap; word-break:break-word; margin:6px 0; }
+  .lcond { font-size:12px; color:var(--muted); margin:3px 0; }
+  .lcond b { color:var(--fg); font-weight:600; }
+  .lhist { font-size:11px; color:var(--muted); margin-top:8px; border-top:1px solid var(--border); padding-top:6px; }
+  .lfilter { display:flex; gap:6px; margin-bottom:14px; flex-wrap:wrap; }
+  .lfilter button { background:var(--chip); color:var(--fg); border:1px solid var(--border);
+    border-radius:14px; padding:4px 12px; cursor:pointer; font-size:12px; }
+  .lfilter button.on { background:var(--accent); color:#0d1117; border-color:var(--accent); }
 </style>
 </head>
 <body>
 <header>
   <h1>🧠 claw-memory</h1>
   <span class="muted" id="stats"></span>
+  <button id="lessonsBtn" title="レッスン (再利用可能な知識のレビュー)">📚 Lessons</button>
   <button id="logsBtn" title="生ログ全文検索 (Claude Code + Codex)">🔎 ログ検索</button>
   <input id="search" placeholder="フィルタ (本文を絞り込み)" />
 </header>
@@ -91,13 +111,14 @@ function renderNav() {
     '<button data-id="'+p.id+'" class="'+(p.id===current?'active':'')+'">'
     + '<div class="nm">'+esc(p.name)+'</div>'
     + '<div class="pth">'+esc(p.path)+'</div>'
-    + '<div class="pth">'+p.counts.summaries+' sum · '+p.counts.chunks+' chunk · '+p.counts.preferences+' pref</div>'
+    + '<div class="pth">'+p.counts.summaries+' sum · '+p.counts.chunks+' chunk · '+p.counts.preferences+' pref · '+(p.counts.lessons||0)+' lesson</div>'
     + '</button>').join("");
   el("nav").querySelectorAll("button").forEach(b =>
     b.onclick = () => select(b.dataset.id));
 }
 async function select(id) {
   current = id; renderNav();
+  if (lessonMode) { loadLessons(); return; }
   const d = await (await fetch("/api/memory?project="+encodeURIComponent(id))).json();
   render(d);
 }
@@ -137,6 +158,7 @@ function currentPath() { const p = projects.find(x => x.id === current); return 
 el("logsBtn").addEventListener("click", () => {
   logMode = !logMode;
   el("logsBtn").classList.toggle("on", logMode);
+  if (logMode && lessonMode) { lessonMode = false; el("lessonsBtn").classList.remove("on"); }
   el("search").value = "";
   el("search").placeholder = logMode
     ? "生ログ全文検索 (このプロジェクトのCC+Codexログ)"
@@ -174,6 +196,105 @@ async function runLogSearch(q) {
       + '<pre>…' + ctx + '…</pre></div>';
   }).join("");
   el("main").innerHTML = '<div class="sect"><h2>Raw Log Search — ' + d.total + ' hits (showing ' + d.results.length + ')</h2>' + cards + '</div>';
+}
+
+// --- Lessons view ---------------------------------------------------------
+let lessonMode = false, lessonStatus = "candidate";
+const LSTATUSES = ["candidate","approved","rejected","archived","superseded"];
+
+el("lessonsBtn").addEventListener("click", () => {
+  lessonMode = !lessonMode;
+  el("lessonsBtn").classList.toggle("on", lessonMode);
+  if (lessonMode && logMode) { logMode = false; el("logsBtn").classList.remove("on"); }
+  el("search").value = ""; filter = "";
+  el("search").placeholder = lessonMode ? "レッスンを絞り込み (本文)" : "フィルタ (本文を絞り込み)";
+  if (current) select(current);
+  else el("main").innerHTML = '<div class="empty">プロジェクトを選択してください</div>';
+});
+
+async function loadLessons() {
+  if (!current) return;
+  el("main").innerHTML = '<div class="empty">読み込み中…</div>';
+  const url = "/api/lessons?project=" + encodeURIComponent(current) + "&status=" + encodeURIComponent(lessonStatus);
+  let d;
+  try { d = await (await fetch(url)).json(); }
+  catch { el("main").innerHTML = '<div class="empty">読み込みに失敗しました</div>'; return; }
+  renderLessons(d);
+}
+
+function lfilterBar(counts) {
+  return '<div class="lfilter">' + LSTATUSES.map(s =>
+    '<button class="' + (s===lessonStatus?'on':'') + '" data-st="' + s + '">'
+    + s + ' (' + (counts[s]||0) + ')</button>').join("") + '</div>';
+}
+
+function renderLessons(d) {
+  const f = filter.toLowerCase();
+  const match = (t) => !f || (t||"").toLowerCase().includes(f);
+  const lessons = (d.lessons||[]).filter(l => match(l.title + " " + l.lesson));
+  const heading = lessonStatus === "candidate" ? "Candidate Review" : (lessonStatus + " lessons");
+  let h = lfilterBar(d.counts||{});
+  h += '<div class="sect"><h2>' + esc(heading) + '</h2>';
+  h += lessons.length ? lessons.map(lessonCard).join("") : '<div class="empty">該当するレッスンがありません</div>';
+  h += '</div>';
+  el("main").innerHTML = h;
+  el("main").querySelectorAll(".lfilter button").forEach(b =>
+    b.onclick = () => { lessonStatus = b.dataset.st; loadLessons(); });
+  bindLessonActions();
+}
+
+function lessonCard(l) {
+  const cond = (label, arr) => (arr && arr.length)
+    ? '<div class="lcond"><b>' + label + ':</b> ' + arr.map(esc).join("; ") + '</div>' : "";
+  const tags = [];
+  if (l.concepts && l.concepts.length) tags.push('🏷 ' + l.concepts.map(esc).join(", "));
+  if (l.files && l.files.length) tags.push('📄 ' + l.files.map(esc).join(", "));
+  return '<div class="card" data-id="' + l.id + '">'
+    + '<div class="meta">'
+    + '<span class="lstatus ' + esc(l.status) + '">' + esc(l.status) + '</span>'
+    + '<span class="tag">' + esc(l.scope) + '</span>'
+    + '<span class="tag">conf ' + Number(l.confidence).toFixed(2) + '</span>'
+    + (l.createdAt||"").split("T")[0] + '</div>'
+    + '<div class="u" style="font-weight:600">' + esc(l.title) + '</div>'
+    + '<div class="lbody">' + esc(l.lesson) + '</div>'
+    + cond("Applies when", l.appliesWhen)
+    + cond("Avoid when", l.avoidWhen)
+    + (l.evidence ? '<div class="lcond"><b>Evidence:</b> ' + esc(l.evidence) + '</div>' : "")
+    + (tags.length ? '<div class="cmeta">' + tags.join(" · ") + '</div>' : "")
+    + lessonActions(l)
+    + '</div>';
+}
+
+function lessonActions(l) {
+  const scopeOpts = ["global","project","repo","file","task","user_preference","team"]
+    .map(s => '<option ' + (s===l.scope?'selected':'') + '>' + s + '</option>').join("");
+  let btns = "";
+  if (l.status !== "approved") btns += '<button data-act="approve">✓ Approve</button>';
+  if (l.status !== "rejected") btns += '<button class="danger" data-act="reject">✕ Reject</button>';
+  if (l.status !== "archived") btns += '<button data-act="archive">🗄 Archive</button>';
+  btns += '<select data-act="scope" title="scope変更">' + scopeOpts + '</select>';
+  return '<div class="lact">' + btns + '</div>';
+}
+
+function bindLessonActions() {
+  el("main").querySelectorAll(".card[data-id]").forEach(card => {
+    const id = card.dataset.id;
+    card.querySelectorAll(".lact button").forEach(b =>
+      b.onclick = () => lessonAction(id, b.dataset.act));
+    const sel = card.querySelector('select[data-act="scope"]');
+    if (sel) sel.onchange = () => lessonAction(id, "scope", { scope: sel.value });
+  });
+}
+
+async function lessonAction(id, action, body) {
+  try {
+    await fetch("/api/lessons/" + encodeURIComponent(id) + "/" + action, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body||{}),
+    });
+  } catch { /* ignore */ }
+  loadLessons();
 }
 
 boot();
