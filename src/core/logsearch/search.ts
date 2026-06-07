@@ -12,12 +12,18 @@ import { createReadStream } from "node:fs";
 import {
   claudeProjectsRoot,
   codexSessionsRoot,
+  chatgptExportRoot,
   MAX_LOG_FILE_SIZE,
+  MAX_CHATGPT_FILE_SIZE,
   UUID_JSONL_RE,
 } from "./paths.js";
-import { parseClaudeCodeLine, parseCodexSession } from "./parse.js";
+import {
+  parseClaudeCodeLine,
+  parseCodexSession,
+  parseChatgptExport,
+} from "./parse.js";
 
-export type LogSource = "claude-code" | "codex";
+export type LogSource = "claude-code" | "codex" | "chatgpt-web";
 
 export interface LogSearchResult {
   source: LogSource;
@@ -49,7 +55,7 @@ export async function searchLogs(
 ): Promise<{ results: LogSearchResult[]; total: number }> {
   const query = opts.query.trim();
   if (!query) return { results: [], total: 0 };
-  const sources = opts.sources ?? ["claude-code", "codex"];
+  const sources = opts.sources ?? ["claude-code", "codex", "chatgpt-web"];
   const limit = opts.limit ?? 20;
   const offset = opts.offset ?? 0;
 
@@ -59,6 +65,9 @@ export async function searchLogs(
   }
   if (sources.includes("codex")) {
     all.push(...(await searchCodex(query, opts)));
+  }
+  if (sources.includes("chatgpt-web")) {
+    all.push(...(await searchChatgpt(query, opts)));
   }
 
   all.sort((a, b) => tsValue(b.timestamp) - tsValue(a.timestamp));
@@ -287,6 +296,64 @@ async function searchCodex(
             hit.length
           )
         );
+      }
+    }
+  }
+  return results;
+}
+
+// --- ChatGPT web (official data export) -------------------------------------
+
+/** Resolve the export root to a list of `*.json` files (file or directory). */
+async function listChatgptFiles(root: string): Promise<string[]> {
+  const s = await stat(root).catch(() => null);
+  if (!s) return [];
+  if (s.isFile()) return [root];
+  if (!s.isDirectory()) return [];
+  const entries = await readdir(root).catch(() => []);
+  return entries
+    .filter((f) => f.toLowerCase().endsWith(".json"))
+    .map((f) => join(root, f));
+}
+
+async function searchChatgpt(
+  query: string,
+  opts: LogSearchOptions
+): Promise<LogSearchResult[]> {
+  const results: LogSearchResult[] = [];
+  const files = await listChatgptFiles(chatgptExportRoot);
+
+  for (const p of files) {
+    const fs = await stat(p).catch(() => null);
+    if (!fs || fs.size > MAX_CHATGPT_FILE_SIZE) continue;
+    let content: string;
+    try {
+      content = await readFile(p, "utf-8");
+    } catch {
+      continue;
+    }
+    for (const conv of parseChatgptExport(content)) {
+      // ChatGPT has no cwd/project; the conversation title stands in for it.
+      const projectPath = conv.title;
+      if (opts.projectPath && !projectPath.includes(opts.projectPath)) continue;
+      for (const msg of conv.messages) {
+        if (!inDateRange(msg.timestamp, opts.startDate, opts.endDate)) continue;
+        for (const hit of matchAll(msg.text, query)) {
+          results.push(
+            buildResult(
+              {
+                source: "chatgpt-web",
+                projectPath,
+                sessionId: conv.conversationId,
+                timestamp: msg.timestamp,
+                role: msg.role,
+              },
+              msg.text,
+              hit.index,
+              hit.length
+            )
+          );
+        }
       }
     }
   }

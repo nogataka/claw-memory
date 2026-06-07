@@ -116,15 +116,15 @@ const TOOLS = [
   {
     name: "memory_search_logs",
     description:
-      "Full-text search across RAW agent transcripts (Claude Code and Codex) under ~/.claude/projects and ~/.codex/sessions. A second memory source independent of the distilled DB: finds past conversations even if they were never distilled. Returns matches with surrounding context, source, project path, session id, role and timestamp.",
+      "Full-text search across RAW agent transcripts: Claude Code (~/.claude/projects), Codex (~/.codex/sessions), and ChatGPT web exports (conversations.json under ~/.claw-memory/chatgpt or CLAW_MEMORY_CHATGPT_EXPORT). A second memory source independent of the distilled DB: finds past conversations even if they were never distilled. Returns matches with surrounding context, source, project path (conversation title for ChatGPT), session id, role and timestamp.",
     inputSchema: {
       type: "object",
       properties: {
         query: { type: "string", description: "Substring to search for (case-insensitive)." },
         sources: {
           type: "array",
-          items: { type: "string", enum: ["claude-code", "codex"] },
-          description: "Which log sources to scan (default both).",
+          items: { type: "string", enum: ["claude-code", "codex", "chatgpt-web"] },
+          description: "Which log sources to scan (default all three).",
         },
         projectPath: { type: "string", description: "Restrict to a project by working-dir path (substring)." },
         startDate: { type: "string", description: "ISO date lower bound (inclusive)." },

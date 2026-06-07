@@ -180,7 +180,7 @@ async function main() {
           "  distill --cwd P --session ID [--path FILE] [--if-stale]\n" +
           "  distill-codex [--recent] [--limit N] [--all]   distill recent Codex sessions\n" +
           "  remember --cwd P \"text\"\n" +
-          "  search-logs \"query\" [--source claude-code,codex] [--project P] [--start ISO] [--end ISO] [--limit N] [--offset N]\n" +
+          "  search-logs \"query\" [--source claude-code,codex,chatgpt-web] [--project P] [--start ISO] [--end ISO] [--limit N] [--offset N]\n" +
           "  hook <distill|recall>     run a Claude Code lifecycle hook (reads JSON on stdin)\n" +
           "  inject-recall             alias for `hook recall`\n" +
           "  install [--codex|--claude-code]     register MCP + hooks (default: codex)\n" +
