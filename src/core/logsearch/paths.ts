@@ -19,6 +19,18 @@ export const chatgptExportRoot =
   process.env.CLAW_MEMORY_CHATGPT_EXPORT ||
   path.join(os.homedir(), ".claw-memory", "chatgpt");
 
+/**
+ * Stable synthetic "project" that distilled ChatGPT conversations are grouped
+ * under. Deliberately independent of where the export file lives, so moving the
+ * export doesn't fork a new project and the viewer always shows one tidy
+ * "chatgpt" project. ChatGPT conversations have no repo/cwd of their own.
+ */
+export const chatgptProjectPath = path.join(
+  os.homedir(),
+  ".claw-memory",
+  "chatgpt"
+);
+
 /** Max transcript size to scan; larger files are skipped (cc-search parity). */
 export const MAX_LOG_FILE_SIZE = 10 * 1024 * 1024;
 
