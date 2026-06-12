@@ -46,10 +46,17 @@ npm install -g @nogataka/claw-memory
 | Source | What it is | Tooling |
 |--------|-----------|---------|
 | **Distilled DB** | LLM-summarized sessions → summaries, preferences, and embedded conversation chunks with structured metadata. Semantically searchable. | `memory_recall`, `memory_search`, `memory_get` |
-| **Raw transcript search** | Full-text grep over your *actual* Claude Code (`~/.claude/projects`) and Codex (`~/.codex/sessions`) logs — including sessions that were never distilled. | `memory_search_logs` |
+| **Raw transcript search** | Full-text grep over your *actual* Claude Code (`~/.claude/projects`), Codex (`~/.codex/sessions`), and **ChatGPT web** export (`conversations.json`) logs — including sessions that were never distilled. | `memory_search_logs` |
 
 The distilled DB is curated and fast to recall; raw search is a safety net that finds
 anything you ever discussed, even before claw-memory was installed.
+
+**ChatGPT web** conversations live on OpenAI's servers, not on disk, so claw-memory
+reads them from the official export: ChatGPT → Settings → **Data controls** → **Export
+data**; unzip and drop `conversations.json` into `~/.claw-memory/chatgpt/` (or point
+`CLAW_MEMORY_CHATGPT_EXPORT` at the file/folder). Then it's searchable like any other
+log, and `claw-memory distill-chatgpt` adds it to the semantic DB under a dedicated
+`chatgpt` project.
 
 ### 2. Automatic capture (distill)
 
@@ -216,7 +223,7 @@ npm link             # optional: expose the `claw-memory` binary
 | `memory_remember(text, cwd?, sessionId?)` | Store a durable free-text note. |
 | `memory_distill(cwd, sessionId? \| transcriptPath?)` | Summarize a session into memory (needs an LLM backend). |
 | `memory_get_preferences(cwd?)` | List stored preferences for the project. |
-| `memory_search_logs(query, sources?, projectPath?, startDate?, endDate?, limit?, offset?)` | Full-text search over RAW Claude Code + Codex transcripts. |
+| `memory_search_logs(query, sources?, projectPath?, startDate?, endDate?, limit?, offset?)` | Full-text search over RAW Claude Code + Codex + ChatGPT-web transcripts (`sources`: `claude-code` / `codex` / `chatgpt-web`). |
 | `memory_forget(ids)` | Soft-delete chunks (hidden from search / recall / viewer). |
 | `lesson_search(query, cwd?, limit?)` | Search approved reusable lessons, ranked by relevance + scope + confidence. |
 | `lesson_inject(query, cwd?, limit?)` | Same, returned as a ready-to-read `<relevant-lessons>` block. |
@@ -250,6 +257,8 @@ directly).
 | `CLAW_MEMORY_LESSON_DEDICATED` | — | `1` = run a separate, higher-quality lesson-extraction pass (extra LLM call). |
 | `CLAW_MEMORY_LESSON_CONFLICT_LLM` | — | `1` = use the LLM to detect conflicting lessons during extraction. |
 | `LESSON_DECAY_FACTOR` / `LESSON_STALE_DAYS` | `0.9` / `30` | Confidence-decay factor and staleness threshold for `lessons decay`. |
+| `CLAW_MEMORY_CHATGPT_EXPORT` | `~/.claw-memory/chatgpt` | ChatGPT `conversations.json` export — a file or a folder of `*.json`. |
+| `CLAW_MEMORY_CHATGPT_MAX_BYTES` | `209715200` (200 MB) | Skip ChatGPT export files larger than this (parsed in memory). |
 
 ### LLM backends
 
@@ -273,6 +282,7 @@ claw-memory mcp                                  # stdio MCP server (what agents
 claw-memory ui [--port N] [--open]               # read-only web viewer
 claw-memory distill --cwd P --session ID [--path FILE] [--if-stale]
 claw-memory distill-codex [--recent] [--limit N] [--all]
+claw-memory distill-chatgpt [--limit N] [--all]  # distill ChatGPT web export conversations
 claw-memory remember --cwd P "a note"
 claw-memory lessons list [--status candidate|approved|...] [--cwd P]
 claw-memory lessons search "query" [--cwd P] [--limit N]
@@ -283,7 +293,7 @@ claw-memory lessons supersede <old_id> <new_id>
 claw-memory lessons decay [--days N] [--factor F] [--dry]
 claw-memory lessons export [--status S] [--cwd P] > bundle.json
 claw-memory lessons import bundle.json [--status S] [--cwd P]
-claw-memory search-logs "query" [--source claude-code,codex] [--project P]
+claw-memory search-logs "query" [--source claude-code,codex,chatgpt-web] [--project P]
                                  [--start ISO] [--end ISO] [--limit N] [--offset N]
 claw-memory hook <recall|distill>               # lifecycle hook (reads JSON on stdin)
 claw-memory install   [--codex | --claude-code] # register MCP + hooks (default: codex)

@@ -135,6 +135,41 @@ async function main() {
       console.log(JSON.stringify({ scanned: files.length, distilled, skipped, failed }, null, 2));
       process.exit(0);
     }
+    case "distill-chatgpt": {
+      const { loadChatgptConversations } = await import("./core/logsearch/recent.js");
+      const { chatgptProjectPath } = await import("./core/logsearch/paths.js");
+      const { distill } = await import("./core/distill.js");
+      const { getOrCreateProjectByPath } = await import("./core/projects.js");
+      const { shouldDistill, markDistilled } = await import("./core/watermark.js");
+
+      const all = hasFlag(rest, "all");
+      const limit = Number(getFlag(rest, "limit") ?? (all ? 100000 : 50));
+      const convos = (await loadChatgptConversations()).slice(0, limit);
+      // ChatGPT has no cwd; all conversations live under one stable synthetic
+      // project so they never pollute a real repository's recall.
+      const project = getOrCreateProjectByPath(chatgptProjectPath);
+      let distilled = 0, skipped = 0, failed = 0;
+      for (const conv of convos) {
+        // Watermark per conversation, keyed by id + last write time.
+        const wmKey = `chatgpt:${conv.conversationId}`;
+        const mtimeMs = conv.updateTime ? new Date(conv.updateTime).getTime() : 0;
+        if (!shouldDistill(wmKey, mtimeMs)) { skipped++; continue; }
+        try {
+          const res = await distill({
+            projectId: project.id,
+            sessionId: conv.conversationId,
+            messages: conv.messages.map((m) => ({ role: m.role, text: m.text })),
+          });
+          markDistilled(wmKey, mtimeMs);
+          if ((res as { skipped?: boolean }).skipped) skipped++; else distilled++;
+        } catch (e) {
+          failed++;
+          console.error(`distill failed ${conv.conversationId}: ${String(e)}`);
+        }
+      }
+      console.log(JSON.stringify({ scanned: convos.length, distilled, skipped, failed }, null, 2));
+      process.exit(0);
+    }
     case "remember": {
       const { getOrCreateProjectByPath } = await import("./core/projects.js");
       const { rememberText } = await import("./core/distill.js");
@@ -311,9 +346,10 @@ async function main() {
           "  ui [--port N] [--open]    start memory viewer\n" +
           "  distill --cwd P --session ID [--path FILE] [--if-stale]\n" +
           "  distill-codex [--recent] [--limit N] [--all]   distill recent Codex sessions\n" +
+          "  distill-chatgpt [--limit N] [--all]            distill ChatGPT web export conversations\n" +
           "  remember --cwd P \"text\"\n" +
           "  lessons <list|search|inject|extract|approve|reject|archive|supersede>\n" +
-          "  search-logs \"query\" [--source claude-code,codex] [--project P] [--start ISO] [--end ISO] [--limit N] [--offset N]\n" +
+          "  search-logs \"query\" [--source claude-code,codex,chatgpt-web] [--project P] [--start ISO] [--end ISO] [--limit N] [--offset N]\n" +
           "  hook <distill|recall>     run a Claude Code lifecycle hook (reads JSON on stdin)\n" +
           "  inject-recall             alias for `hook recall`\n" +
           "  install [--codex|--claude-code]     register MCP + hooks (default: codex)\n" +
