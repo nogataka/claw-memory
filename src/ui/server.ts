@@ -11,6 +11,19 @@ import { listProjects } from "../core/projects.js";
 import { getRecentSummaries, getPreferences } from "../core/memory.js";
 import { listChunks, getChunkCount } from "../core/vector-memory.js";
 import { searchLogs, type LogSource } from "../core/logsearch/search.js";
+import {
+  listLessons,
+  listConflicts,
+  getConflictCount,
+  getLesson,
+  getLessonCount,
+  getEvents,
+  getLinks,
+  setStatus,
+  supersede,
+  updateLesson,
+  type LessonStatus,
+} from "../core/lessons.js";
 import { PAGE } from "./page.js";
 
 function countSummaries(projectId: string): number {
@@ -77,6 +90,7 @@ export function buildUiApp(): Hono {
         summaries: countSummaries(p.id),
         chunks: getChunkCount(p.id),
         preferences: countPreferences(p.id),
+        lessons: getLessonCount({ projectId: p.id }),
       },
     }));
     return c.json(out);
@@ -90,6 +104,71 @@ export function buildUiApp(): Hono {
       preferences: getPreferences(projectId),
       chunks: listChunks(projectId, 300),
     });
+  });
+
+  // --- Lesson layer -------------------------------------------------------
+  // The viewer is read-only for chunks/summaries, but lessons are reviewable:
+  // these POST routes are the only writes the UI performs, and only ever touch
+  // the lessons tables.
+  app.get("/api/lessons", (c) => {
+    const projectId = c.req.query("project") || undefined;
+    const status = c.req.query("status") || undefined;
+    // "conflicts" is a virtual view (lessons in a conflicts_with link), not a
+    // real status column value.
+    const lessons =
+      status === "conflicts"
+        ? listConflicts(projectId, 500)
+        : listLessons({ projectId, status }, 500);
+    return c.json({
+      lessons,
+      counts: {
+        candidate: getLessonCount({ projectId, status: "candidate" }),
+        approved: getLessonCount({ projectId, status: "approved" }),
+        rejected: getLessonCount({ projectId, status: "rejected" }),
+        archived: getLessonCount({ projectId, status: "archived" }),
+        superseded: getLessonCount({ projectId, status: "superseded" }),
+        conflicts: getConflictCount(projectId),
+      },
+    });
+  });
+
+  app.get("/api/lessons/:id", (c) => {
+    const lesson = getLesson(c.req.param("id"));
+    if (!lesson) return c.json({ error: "not found" }, 404);
+    return c.json({ lesson, events: getEvents(lesson.id), links: getLinks(lesson.id) });
+  });
+
+  app.post("/api/lessons/:id/:action", async (c) => {
+    const id = c.req.param("id");
+    const action = c.req.param("action");
+    const body = await c.req.json().catch(() => ({}) as Record<string, unknown>);
+    let ok = false;
+    switch (action) {
+      case "approve":
+        ok = setStatus(id, "approved");
+        break;
+      case "reject":
+        ok = setStatus(id, "rejected", body.reason as string | undefined);
+        break;
+      case "archive":
+        ok = setStatus(id, "archived", body.reason as string | undefined);
+        break;
+      case "status":
+        ok = setStatus(id, body.status as LessonStatus, body.note as string | undefined);
+        break;
+      case "scope":
+        ok = updateLesson(id, { scope: String(body.scope) });
+        break;
+      case "confidence":
+        ok = updateLesson(id, { confidence: Number(body.confidence) });
+        break;
+      case "supersede":
+        ok = supersede(id, String(body.newId));
+        break;
+      default:
+        return c.json({ error: "unknown action" }, 400);
+    }
+    return c.json({ ok }, ok ? 200 : 404);
   });
 
   // Raw transcript search (cc-search port) — Claude Code + Codex logs.

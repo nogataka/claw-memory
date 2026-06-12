@@ -101,7 +101,21 @@ handle the high-frequency distill work.
 
 A zero-build, read-only viewer (`claw-memory ui`) to browse projects, summaries,
 chunks (with their metadata), preferences, and to run raw-log search — with live
-updates via SSE. It runs only when you start it.
+updates via SSE. It runs only when you start it. The viewer also has a **Lessons**
+tab for reviewing, approving and editing extracted lessons.
+
+### 8. Reusable lessons
+
+Beyond retrieving past logs, claw-memory distills AI coding sessions into
+**reusable lessons** — actionable, abstracted knowledge such as project-specific
+constraints, debugging patterns, design decisions and user preferences. Lessons
+are extracted alongside the normal summary (no extra LLM call), stored locally,
+embedded with the same local model, and surfaced (only after approval) when a
+similar task appears later. Each lesson carries `scope`, `confidence`,
+`applies_when` / `avoid_when` and a lifecycle (candidate → approved → archived /
+superseded), with duplicate / conflict detection and confidence decay over time.
+Raw logs remain available as evidence; day-to-day recall focuses on concise,
+reusable lessons.
 
 ---
 
@@ -204,9 +218,16 @@ npm link             # optional: expose the `claw-memory` binary
 | `memory_get_preferences(cwd?)` | List stored preferences for the project. |
 | `memory_search_logs(query, sources?, projectPath?, startDate?, endDate?, limit?, offset?)` | Full-text search over RAW Claude Code + Codex transcripts. |
 | `memory_forget(ids)` | Soft-delete chunks (hidden from search / recall / viewer). |
+| `lesson_search(query, cwd?, limit?)` | Search approved reusable lessons, ranked by relevance + scope + confidence. |
+| `lesson_inject(query, cwd?, limit?)` | Same, returned as a ready-to-read `<relevant-lessons>` block. |
+| `lesson_get(lesson_id)` | Full detail of one lesson (fields + history + links). |
+| `lesson_extract(cwd, sessionId? \| transcriptPath?)` | Dedicated lesson-extraction pass over a session (needs an LLM backend). |
+| `lesson_approve / lesson_reject / lesson_archive(lesson_id, reason?)` | Lifecycle transitions. |
+| `lesson_supersede(old_lesson_id, new_lesson_id)` | Replace an old lesson with a newer one. |
 
-All tools are fully local except `memory_distill` (LLM) and `memory_search_logs`
-(reads `~/.claude/projects` and `~/.codex/sessions` directly).
+All tools are fully local except `memory_distill` / `lesson_extract` (LLM) and
+`memory_search_logs` (reads `~/.claude/projects` and `~/.codex/sessions`
+directly).
 
 ---
 
@@ -225,6 +246,10 @@ All tools are fully local except `memory_distill` (LLM) and `memory_search_logs`
 | `CLAW_MEMORY_EXCLUDED_PROJECTS` | — | Comma/colon-separated path substrings to never record or recall. |
 | `MEMORY_SIMILARITY_MAX_DISTANCE` | `0.6` | Max cosine distance for a semantic hit (lower = stricter). |
 | `CLAW_MEMORY_UI_PORT` | `4319` | Viewer port. |
+| `LESSON_RECALL_LIMIT` | `3` | Approved lessons injected into the recall block (`0` disables). |
+| `CLAW_MEMORY_LESSON_DEDICATED` | — | `1` = run a separate, higher-quality lesson-extraction pass (extra LLM call). |
+| `CLAW_MEMORY_LESSON_CONFLICT_LLM` | — | `1` = use the LLM to detect conflicting lessons during extraction. |
+| `LESSON_DECAY_FACTOR` / `LESSON_STALE_DAYS` | `0.9` / `30` | Confidence-decay factor and staleness threshold for `lessons decay`. |
 
 ### LLM backends
 
@@ -249,6 +274,15 @@ claw-memory ui [--port N] [--open]               # read-only web viewer
 claw-memory distill --cwd P --session ID [--path FILE] [--if-stale]
 claw-memory distill-codex [--recent] [--limit N] [--all]
 claw-memory remember --cwd P "a note"
+claw-memory lessons list [--status candidate|approved|...] [--cwd P]
+claw-memory lessons search "query" [--cwd P] [--limit N]
+claw-memory lessons inject "query" [--cwd P] [--limit N]
+claw-memory lessons extract --session ID [--cwd P] [--path FILE]
+claw-memory lessons approve|reject|archive <lesson_id> [--reason R]
+claw-memory lessons supersede <old_id> <new_id>
+claw-memory lessons decay [--days N] [--factor F] [--dry]
+claw-memory lessons export [--status S] [--cwd P] > bundle.json
+claw-memory lessons import bundle.json [--status S] [--cwd P]
 claw-memory search-logs "query" [--source claude-code,codex] [--project P]
                                  [--start ISO] [--end ISO] [--limit N] [--offset N]
 claw-memory hook <recall|distill>               # lifecycle hook (reads JSON on stdin)

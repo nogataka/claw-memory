@@ -7,16 +7,25 @@
 import { embedQuery } from "./embeddings.js";
 import { searchSimilar, type SimilarChunk } from "./vector-memory.js";
 import { getPreferences, getRecentSummaries } from "./memory.js";
+import {
+  searchLessons,
+  formatLessonBlock,
+  type RankedLesson,
+} from "./lesson-search.js";
 
 const MEMORY_MAX_DISTANCE = Number(
   process.env.MEMORY_SIMILARITY_MAX_DISTANCE ?? 0.4
 );
+// Approved lessons injected into the recall block. Kept small to avoid context
+// bloat; 0 disables lesson injection entirely.
+const RECALL_LESSON_LIMIT = Number(process.env.LESSON_RECALL_LIMIT ?? 3);
 
 export interface MemoryBlock {
   fullText: string;
   preferences: Array<{ key: string; value: string }>;
   summaries: string[];
   similar: SimilarChunk[];
+  lessons: RankedLesson[];
 }
 
 export async function buildMemoryBlock(
@@ -34,6 +43,20 @@ export async function buildMemoryBlock(
       similar = searchSimilar(emb, projectId, topK, MEMORY_MAX_DISTANCE);
     } catch (err) {
       console.error("[claw-memory] semantic search failed:", err);
+    }
+  }
+
+  // Approved, reusable lessons relevant to this request (best-effort).
+  let lessons: RankedLesson[] = [];
+  if (query.trim() && RECALL_LESSON_LIMIT > 0) {
+    try {
+      lessons = await searchLessons(
+        query,
+        { projectId },
+        { limit: RECALL_LESSON_LIMIT }
+      );
+    } catch (err) {
+      console.error("[claw-memory] lesson recall failed:", err);
     }
   }
 
@@ -69,10 +92,14 @@ export async function buildMemoryBlock(
     text += "</memory-context>\n";
   }
 
+  const lessonBlock = formatLessonBlock(lessons);
+  if (lessonBlock) text += `\n${lessonBlock}\n`;
+
   return {
     fullText: text.trim(),
     preferences: prefs.map((p) => ({ key: p.key, value: p.value })),
     summaries: summaries.map((s) => s.summary),
     similar,
+    lessons,
   };
 }

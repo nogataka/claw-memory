@@ -16,6 +16,12 @@ import {
 import { loadTranscript, type TranscriptMessage } from "./transcript.js";
 import { stripPrivate } from "./private.js";
 import { log } from "./logger.js";
+import {
+  saveCandidates,
+  extractDedicated,
+  dedicatedEnabled,
+  type LessonCandidate,
+} from "./lesson-extract.js";
 
 const MIN_MESSAGES = 2;
 const MIN_TEXT_LENGTH = 100;
@@ -37,6 +43,7 @@ export interface DistillResult {
   summary?: string;
   preferencesCount?: number;
   chunks?: number;
+  lessons?: number;
 }
 
 const PROMPT = (transcript: string) => `以下の会話を分析して JSON で回答してください。
@@ -51,9 +58,15 @@ const PROMPT = (transcript: string) => `以下の会話を分析して JSON で�
    key は必ず次のいずれか（該当しなければ出さない）:
    language | response_style | detail_level | code_style | framework | tone | tools
    変更がなければ空配列。
+7. lessons: 次回以降の作業で再利用できる「教訓」だけを抽出（無ければ空配列）。
+   一時的な会話・未検証の推測・秘密情報・一回限りのコマンド・重複は抽出しない。
+   各 lesson は実行可能・具体的・再利用可能であること。
+   各要素: {"title","lesson","applies_when":[],"avoid_when":[],
+   "scope":"global|project|repo|file|task|user_preference","confidence":0.0-1.0,
+   "evidence","concepts":[],"files":[]}
 
 JSON のみ回答:
-{"summary": "...", "obs_type": "...", "concepts": ["..."], "files_read": ["..."], "files_modified": ["..."], "preferences": [{"key": "...", "value": "..."}]}
+{"summary": "...", "obs_type": "...", "concepts": ["..."], "files_read": ["..."], "files_modified": ["..."], "preferences": [{"key": "...", "value": "..."}], "lessons": []}
 
 <conversation>
 ${transcript}
@@ -99,6 +112,7 @@ export async function distill(input: DistillInput): Promise<DistillResult> {
     files_read?: string[];
     files_modified?: string[];
     preferences?: Array<{ key: string; value: string }>;
+    lessons?: LessonCandidate[];
   };
 
   if (result.summary) {
@@ -123,6 +137,7 @@ export async function distill(input: DistillInput): Promise<DistillResult> {
 
   // --- Vector memory: re-chunk this session (idempotent) ---
   let chunkCount = 0;
+  let savedChunkIds: string[] = [];
   try {
     deleteChunksBySession(input.sessionId);
     const pairs: Array<{ userText: string; assistantText: string }> = [];
@@ -156,11 +171,35 @@ export async function distill(input: DistillInput): Promise<DistillResult> {
           filesModified,
         });
       }
-      if (toSave.length > 0) saveChunks(toSave);
+      if (toSave.length > 0) savedChunkIds = saveChunks(toSave);
       chunkCount = toSave.length;
     }
   } catch (err) {
     console.error("[claw-memory] chunk embed failed:", err);
+  }
+
+  // --- Lesson layer: extract reusable lessons (best-effort) ---
+  // Candidates ride along in the summary JSON above (no extra LLM call). When
+  // CLAW_MEMORY_LESSON_DEDICATED=1, run a separate higher-quality extraction
+  // pass instead. Failures here must never break the summary path.
+  let lessonCount = 0;
+  try {
+    const candidates: LessonCandidate[] = dedicatedEnabled()
+      ? await extractDedicated(transcript)
+      : Array.isArray(result.lessons)
+        ? result.lessons
+        : [];
+    if (candidates.length > 0) {
+      const ids = await saveCandidates({
+        projectId: input.projectId,
+        sessionId: input.sessionId,
+        candidates,
+        sourceChunkIds: savedChunkIds,
+      });
+      lessonCount = ids.length;
+    }
+  } catch (err) {
+    console.error("[claw-memory] lesson extract failed:", err);
   }
 
   log("distill", {
@@ -169,12 +208,14 @@ export async function distill(input: DistillInput): Promise<DistillResult> {
     obsType,
     chunks: chunkCount,
     preferences: result.preferences?.length ?? 0,
+    lessons: lessonCount,
   });
 
   return {
     summary: result.summary,
     preferencesCount: result.preferences?.length ?? 0,
     chunks: chunkCount,
+    lessons: lessonCount,
   };
 }
 
