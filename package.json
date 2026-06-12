@@ -1,6 +1,6 @@
 {
   "name": "@nogataka/claw-memory",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "type": "module",
   "description": "Independent, in-process semantic memory MCP server (sqlite-vec + local Xenova e5) with a lightweight web viewer. No daemon, no Python. Installable as a Claude Code plugin and a Codex MCP server.",
   "license": "MIT",
